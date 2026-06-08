@@ -790,7 +790,7 @@ async function init() {
           method: 'POST',
           headers: {
             'apikey': SUPABASE_ANON_KEY,
-            'Authorization': 'Bearer ' + sbAuthToken,
+            'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
           },
           body: file
         });
