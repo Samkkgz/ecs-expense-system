@@ -25,15 +25,7 @@
       'https://unpkg.com/@supabase/supabase-js@2',
       'https://cdnjs.cloudflare.com/ajax/libs/supabase-js/2.39.0/umd/supabase.min.js'
     ]);
-    // Chart.js
-    function loadChart() {
-      var s = document.createElement('script');
-      s.src = 'https://cdn.jsdelivr.net/npm/chart.js@4';
-      s.onerror = function() { s.src = 'https://unpkg.com/chart.js@4'; };
-      document.head.appendChild(s);
-    }
-    loadChart();
-  </script>
+    </script>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11/font/bootstrap-icons.css">
   <style>
@@ -318,12 +310,12 @@
   </div>
 
   <!-- Invoice Edit Modal -->
-  <div class="modal fade" id="invoiceModal" tabindex="-1">
-    <div class="modal-dialog modal-lg">
-      <div class="modal-content">
-        <div class="modal-header"><h5 class="modal-title">发票详情</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
-        <div class="modal-body" id="invoiceModalBody"></div>
-        <div class="modal-footer">
+  <div class="modal-overlay" id="invoiceModal" style="display:none">
+    <div style="background:white;border-radius:12px;max-width:700px;margin:40px auto;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,0.2)">
+      <div >
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px"><h5 style="font-size:18px;font-weight:600">发票详情</h5><button onclick="closeModal()" style="background:none;border:none;font-size:24px;cursor:pointer">&times;</button></div>
+        <div id="invoiceModalBody"></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;padding-top:16px;border-top:1px solid #eee">
           <button class="btn btn-success" onclick="approveInvoice()"><i class="bi bi-check-circle"></i> 通过</button>
           <button class="btn btn-warning" onclick="rejectInvoice()"><i class="bi bi-x-circle"></i> 驳回</button>
           <button class="btn btn-primary" onclick="saveInvoiceEdit()"><i class="bi bi-save"></i> 保存修改</button>
@@ -335,37 +327,128 @@
   <!-- Toast container -->
   <div class="toast-container" id="toastContainer"></div>
 
-  <script>
-    var bsScript = document.createElement('script');
-    bsScript.src = 'https://cdn.jsdelivr.net/npm/bootstrap@5.3/dist/js/bootstrap.bundle.min.js';
-    bsScript.onerror = function() {
-      bsScript.src = 'https://unpkg.com/bootstrap@5.3/dist/js/bootstrap.bundle.min.js';
-      document.body.appendChild(bsScript);
-    };
-    document.body.appendChild(bsScript);
-  </script>
+  <!-- Bootstrap CSS only (JS replaced with vanilla JS) -->
   <script>
   // ============================================================
-  // Supabase 配置（部署时替换）
+  // Supabase 原生 REST 客户端（无需 CDN，使用 fetch()）
   // ============================================================
   const SUPABASE_URL = 'https://cgeqreslzrdccdisaloe.supabase.co';
   const SUPABASE_ANON_KEY = 'sb_publishable_ecTsaTKF0-wM7lSPDDleZA_Ji-i3HuW';
-  var supabaseClient = null;
-  function initSupabase() {
-    if (window.supabase && window.supabase.createClient) {
-      try {
-        supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-          auth: { persistSession: true, autoRefreshToken: true }
-        });
-        return true;
-      } catch(e) {
-        console.error('Supabase init error:', e);
-        return false;
+  
+  // Supabase REST 客户端
+  const sb = {
+    // 通用请求
+    async request(method, path, options = {}) {
+      const url = SUPABASE_URL + path;
+      const headers = {
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': 'Bearer ' + (options.token || SUPABASE_ANON_KEY),
+        'Content-Type': 'application/json',
+        'Prefer': 'return=representation',
+        ...options.headers
+      };
+      const res = await fetch(url, {
+        method,
+        headers,
+        body: options.body ? JSON.stringify(options.body) : undefined
+      });
+      if (!res.ok) {
+        const err = await res.text();
+        throw new Error(err);
       }
+      if (options.raw) return res;
+      const text = await res.text();
+      return text ? JSON.parse(text) : null;
+    },
+    // 数据库查询
+    from(table) {
+      const base = '/rest/v1/' + table;
+      const self = this;
+      return {
+        select(columns = '*', opts = {}) {
+          let url = base + '?select=' + encodeURIComponent(columns);
+          if (opts.count) url += '&count=exact';
+          // Chained methods
+          const chain = {
+            _url: url,
+            _order: '',
+            _range: '',
+            _filters: [],
+            order(col, dir = 'desc') {
+              this._order = '&order=' + encodeURIComponent(col) + '.' + dir;
+              return this;
+            },
+            limit(n) {
+              this._range = '&limit=' + n;
+              return this;
+            },
+            eq(col, val) {
+              this._filters.push(col + '=eq.' + encodeURIComponent(val));
+              return this;
+            },
+            gte(col, val) {
+              this._filters.push(col + '=gte.' + encodeURIComponent(val));
+              return this;
+            },
+            lte(col, val) {
+              this._filters.push(col + '=lte.' + encodeURIComponent(val));
+              return this;
+            },
+            single() {
+              this._single = true;
+              return this;
+            },
+            async then(resolve) {
+              let q = this._url;
+              if (this._filters.length) q += '&' + this._filters.join('&');
+              if (this._order) q += this._order;
+              if (this._range) q += this._range;
+              const result = await self.request('GET', q, opts);
+              resolve(this._single ? (result?.[0] || null) : result);
+            }
+          };
+          return chain;
+        },
+        async insert(data) {
+          return await self.request('POST', base, { body: data });
+        },
+        async update(data, opts = {}) {
+          let url = base;
+          if (opts.eq) url += '?' + opts.eq.col + '=eq.' + encodeURIComponent(opts.eq.val);
+          return await self.request('PATCH', url, { body: data });
+        },
+        async eq(col, val) {
+          this._filter = { col, val };
+          return this;
+        }
+      };
+    },
+    // 存储
+    storage: {
+      from: (bucket) => ({
+        async upload(path, file) {
+          const url = SUPABASE_URL + '/storage/v1/object/' + bucket + '/' + path;
+          const res = await fetch(url, {
+            method: 'POST',
+            headers: {
+              'apikey': SUPABASE_ANON_KEY,
+              'Authorization': 'Bearer ' + SUPABASE_ANON_KEY
+            },
+            body: file
+          });
+          if (!res.ok) throw new Error(await res.text());
+          return true;
+        },
+        getPublicUrl(path) {
+          return { data: { publicUrl: SUPABASE_URL + '/storage/v1/object/public/' + bucket + '/' + path } };
+        }
+      })
+    },
+    // RPC 调用
+    rpc(name, params = {}) {
+      return this.request('POST', '/rest/v1/rpc/' + name, { body: params });
     }
-    return false;
-  }
-  initSupabase();
+  };
 
   // ============================================================
   // 状态管理
@@ -374,8 +457,8 @@
   let currentPage = 'dashboard';
   let editingInvoiceId = null;
   let categories = [];
-  let monthlyChart = null;
-  let categoryChart = null;
+  let monthlyChartCanvas = null;
+  let categoryChartCanvas = null;
   const PAGE_SIZE = 20;
   let currentPageNum = 1;
 
@@ -384,9 +467,17 @@
   // ============================================================
   document.addEventListener('DOMContentLoaded', init);
 
-  async function init() {
+  function closeModal() {
+  document.getElementById('invoiceModal').style.display = 'none';
+}
+// Close modal on overlay click
+document.addEventListener('click', function(e) {
+  if (e.target && e.target.id === 'invoiceModal') closeModal();
+});
+
+async function init() {
     // Check session
-    const { data: { session } } = await supabaseClient.auth.getSession();
+    var { data: { session } } = await checkSession();
     if (session) {
       currentUser = session.user;
       showApp();
@@ -395,7 +486,8 @@
     }
 
     // Listen for auth state changes
-    supabaseClient.auth.onAuthStateChange((event, session) => {
+    // Auth state handled via hash/query params
+    window.addEventListener('hashchange', function() {
       if (event === 'SIGNED_IN' && session) {
         currentUser = session.user;
         showApp();
@@ -443,7 +535,7 @@
 
     try {
       // Try password-less magic link first
-      const { error } = await supabaseClient.auth.signInWithOtp({ email, options: { shouldCreateUser: true } });
+      var { error } = await sendMagicLink(email);
       if (error) throw error;
       document.getElementById('loginHint').textContent = '✅ 登录链接已发送到您的邮箱，请查收';
       showToast('验证链接已发送到您的邮箱 ✉️', 'success');
@@ -456,7 +548,7 @@
   }
 
   async function handleLogout() {
-    await supabaseClient.auth.signOut();
+    await signOut();
     document.getElementById('loginPage').style.display = 'flex';
     document.getElementById('appLayout').classList.remove('active');
   }
@@ -470,7 +562,7 @@
     document.getElementById('userEmail').textContent = currentUser.email;
 
     // Check user profile/role
-    const { data: profile } = await supabaseClient.from('profiles').select('*').eq('id', currentUser.id).single();
+    const { data: profile } = await sb.from('profiles').select('*').eq('id', currentUser.id).single();
     if (profile) {
       document.getElementById('userName').textContent = profile.name || profile.email;
       if (profile.role === 'admin' || profile.role === 'super_admin') {
@@ -510,7 +602,7 @@
   // 加载分类
   // ============================================================
   async function loadCategories() {
-    const { data } = await supabaseClient.from('expense_categories').select('*').order('sort_order');
+    const { data } = await sb.from('expense_categories').select('*').order('sort_order');
     if (data) {
       categories = data;
       const selects = ['uploadCategory', 'filterCategory'];
@@ -685,55 +777,78 @@
   }
 
   function renderMonthlyChart(data, year) {
-    const ctx = document.getElementById('monthlyChart').getContext('2d');
-    if (monthlyChart) monthlyChart.destroy();
-    monthlyChart = new Chart(ctx, {
-      type: 'bar',
-      data: {
-        labels: ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'],
-        datasets: [{
-          label: '支出 (¥)',
-          data,
-          backgroundColor: 'rgba(102,126,234,0.6)',
-          borderColor: '#667eea',
-          borderWidth: 2,
-          borderRadius: 4
-        }]
-      },
-      options: {
-        responsive: true,
-        plugins: { legend: { display: false } },
-        scales: { y: { beginAtZero: true, ticks: { callback: v => '¥' + v.toLocaleString() } } }
+    var canvas = document.getElementById('monthlyChart');
+    var ctx = canvas.getContext('2d');
+    var W = canvas.width = canvas.parentElement.clientWidth;
+    var H = canvas.height = 250;
+    ctx.clearRect(0,0,W,H);
+    var max = Math.max(...data, 1);
+    var pad = {t:20,b:30,l:50,r:20};
+    var cw = (W-pad.l-pad.r)/12;
+    var colors = ['rgba(102,126,234,0.7)','rgba(118,75,162,0.7)'];
+    data.forEach(function(v,i){
+      var x = pad.l + i*cw + 2;
+      var y = pad.t + (H-pad.t-pad.b)*(1 - v/max);
+      var h = (H-pad.t-pad.b)*(v/max);
+      ctx.fillStyle = colors[i%2];
+      ctx.beginPath();
+      ctx.roundRect(x, y, cw-4, Math.max(h,2), 4);
+      ctx.fill();
+      ctx.fillStyle = '#666';
+      ctx.font = '10px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'][i], x+cw/2-2, H-5);
+      if(v > 0) {
+        ctx.fillStyle = '#333';
+        ctx.font = '11px sans-serif';
+        ctx.fillText('¥'+v.toFixed(0), x+cw/2-2, y-5);
       }
     });
+    // Y axis labels
+    ctx.fillStyle = '#999';
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'right';
+    for(var i=0;i<=4;i++) {
+      var y = pad.t + (H-pad.t-pad.b)*(1-i/4);
+      ctx.fillText('¥'+(max*i/4).toFixed(0), pad.l-5, y+4);
+    }
   }
 
   function renderCategoryChart(catTotals) {
-    const ctx = document.getElementById('categoryChart').getContext('2d');
-    if (categoryChart) categoryChart.destroy();
-    
-    const labels = [];
-    const data = [];
-    const colors = ['#667eea','#764ba2','#f093fb','#4facfe','#43e97b','#fa709a','#a18cd1','#fbc2eb'];
-    
-    Object.entries(catTotals).forEach(([catId, total]) => {
-      const cat = categories.find(c => c.id == catId);
-      labels.push(cat?.name || `类目#${catId}`);
-      data.push(total);
+    var canvas = document.getElementById('categoryChart');
+    var ctx = canvas.getContext('2d');
+    var W = canvas.width = canvas.parentElement.clientWidth;
+    var H = canvas.height = 250;
+    ctx.clearRect(0,0,W,H);
+    var entries = Object.entries(catTotals);
+    if(!entries.length) return;
+    var total = entries.reduce(function(s,e){return s+e[1];},0);
+    var colors = ['#667eea','#764ba2','#f093fb','#4facfe','#43e97b','#fa709a','#a18cd1','#fbc2eb'];
+    var cx = W*0.35, cy = H/2, r = Math.min(W*0.25, H*0.35);
+    var startAngle = -Math.PI/2;
+    entries.forEach(function(e,i){
+      var angle = (e[1]/total)*2*Math.PI;
+      ctx.fillStyle = colors[i%colors.length];
+      ctx.beginPath();
+      ctx.moveTo(cx,cy);
+      ctx.arc(cx,cy,r,startAngle,startAngle+angle);
+      ctx.closePath();
+      ctx.fill();
+      startAngle += angle;
     });
-
-    categoryChart = new Chart(ctx, {
-      type: 'doughnut',
-      data: {
-        labels,
-        datasets: [{ data, backgroundColor: colors.slice(0, labels.length) }]
-      },
-      options: {
-        responsive: true,
-        plugins: {
-          legend: { position: 'bottom', labels: { font: { size: 11 } } }
-        }
-      }
+    // Legend
+    var ly = 20;
+    entries.forEach(function(e,i){
+      var cat = categories.find(function(c){return c.id==e[0];});
+      var name = cat ? cat.name : '类目#'+e[0];
+      var x = W*0.55;
+      ctx.fillStyle = colors[i%colors.length];
+      ctx.fillRect(x, ly, 12, 12);
+      ctx.fillStyle = '#333';
+      ctx.font = '12px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText(name + '  ¥'+(e[1]).toFixed(2), x+18, ly+11);
+      ly += 24;
     });
   }
 
@@ -773,7 +888,7 @@
       try {
         // Upload to Supabase Storage
         const storagePath = `invoices/${year}/${mon}/${Date.now()}_${file.name}`;
-        const { error: uploadError } = await supabaseClient.storage
+        const { error: uploadError } = await sb.storage
           .from('invoices')
           .upload(storagePath, file, { contentType: 'application/pdf', upsert: false });
 
@@ -821,7 +936,7 @@
     const filterStatus = document.getElementById('filterStatus').value;
     const search = document.getElementById('filterSearch').value.trim();
 
-    let query = supabaseClient.from('invoices').select('*', { count: 'exact' });
+    let query = sb.from('invoices').select('*', { count: 'exact' });
     
     if (filterMonth) {
       query = query.gte('invoice_date', `${filterMonth}-01`).lte('invoice_date', `${filterMonth}-31`);
@@ -901,7 +1016,7 @@
     const inv = allInvoices.find(i => i.id === id);
     if (!inv) return;
 
-    const modal = new bootstrap.Modal(document.getElementById('invoiceModal'));
+    document.getElementById('invoiceModal').style.display = 'block';
     
     document.getElementById('invoiceModalBody').innerHTML = `
       <div class="row g-3">
@@ -958,12 +1073,12 @@
       updated_at: new Date().toISOString()
     };
 
-    const { error } = await supabaseClient.from('invoices').update(updates).eq('id', editingInvoiceId);
+    const { error } = await sb.from('invoices').update(updates).eq('id', editingInvoiceId);
     if (error) {
       showToast('保存失败: ' + error.message, 'danger');
     } else {
       showToast('✅ 保存成功', 'success');
-      bootstrap.Modal.getInstance(document.getElementById('invoiceModal')).hide();
+      closeModal();
       loadInvoices();
       loadDashboard();
     }
@@ -979,12 +1094,12 @@
 
   async function updateInvoiceStatus(status) {
     if (!editingInvoiceId) return;
-    const { error } = await supabaseClient.from('invoices').update({ status, updated_at: new Date().toISOString() }).eq('id', editingInvoiceId);
+    const { error } = await sb.from('invoices').update({ status, updated_at: new Date().toISOString() }).eq('id', editingInvoiceId);
     if (error) {
       showToast('操作失败', 'danger');
     } else {
       showToast(`✅ 已${status === 'approved' ? '通过' : '驳回'}`, 'success');
-      bootstrap.Modal.getInstance(document.getElementById('invoiceModal')).hide();
+      closeModal();
       loadInvoices();
       loadDashboard();
     }
@@ -996,7 +1111,7 @@
   async function exportInvoices() {
     showToast('正在生成导出...', 'info');
     try {
-      const { data } = await supabaseClient.from('invoices').select('*').order('invoice_date', { ascending: false });
+      const { data } = await sb.from('invoices').select('*').order('invoice_date', { ascending: false });
       if (!data || data.length === 0) {
         showToast('暂无数据可导出', 'warning');
         return;
@@ -1044,7 +1159,7 @@
     // If no cached report, compute on-the-fly
     if (!report) {
       // Call RPC to generate
-      const { data: rpcResult, error } = await supabaseClient.rpc('refresh_expense_report', {
+      const { data: rpcResult, error } = await sb.rpc('refresh_expense_report', {
         p_type: reportType,
         p_key: periodKey
       });
@@ -1121,7 +1236,7 @@
     // Get all invoices for this period
     let invoices = [];
     if (reportType === 'monthly') {
-      const { data } = await supabaseClient.from('invoices')
+      const { data } = await sb.from('invoices')
         .select('*')
         .gte('invoice_date', `${periodKey}-01`)
         .lte('invoice_date', `${periodKey}-31`)
@@ -1132,14 +1247,14 @@
       const qNum = parseInt(q[1]);
       const startM = (qNum-1)*3+1;
       const endM = qNum*3;
-      const { data } = await supabaseClient.from('invoices')
+      const { data } = await sb.from('invoices')
         .select('*')
         .gte('invoice_date', `${year}-${String(startM).padStart(2,'0')}-01`)
         .lte('invoice_date', `${year}-${String(endM).padStart(2,'0')}-31`)
         .eq('status', 'approved');
       invoices = data || [];
     } else {
-      const { data } = await supabaseClient.from('invoices')
+      const { data } = await sb.from('invoices')
         .select('*')
         .gte('invoice_date', `${periodKey}-01-01`)
         .lte('invoice_date', `${periodKey}-12-31`)
@@ -1171,7 +1286,7 @@
   // CATEGORY MANAGEMENT
   // ============================================================
   async function loadCategoryManagement() {
-    const { data } = await supabaseClient.from('expense_categories').select('*').order('sort_order');
+    const { data } = await sb.from('expense_categories').select('*').order('sort_order');
     if (!data) return;
     categories = data;
 
@@ -1209,7 +1324,7 @@
     const sort_order = parseInt(document.getElementById(`sort_${id}`).value) || 0;
     if (!name) return showToast('类目名称不能为空', 'warning');
 
-    const { error } = await supabaseClient.from('expense_categories').update({ name, description, sort_order }).eq('id', id);
+    const { error } = await sb.from('expense_categories').update({ name, description, sort_order }).eq('id', id);
     if (error) showToast('更新失败: ' + error.message, 'danger');
     else { showToast('✅ 更新成功', 'success'); loadCategoryManagement(); }
   }
@@ -1220,7 +1335,7 @@
     const sort_order = parseInt(document.getElementById('newCatSort').value) || 99;
     if (!name) return showToast('请输入类目名称', 'warning');
 
-    const { error } = await supabaseClient.from('expense_categories').insert({ name, description, sort_order });
+    const { error } = await sb.from('expense_categories').insert({ name, description, sort_order });
     if (error) showToast('添加失败: ' + error.message, 'danger');
     else { showToast('✅ 添加成功', 'success'); loadCategoryManagement(); loadCategories(); }
   }
@@ -1229,7 +1344,7 @@
   // ADMIN PANEL
   // ============================================================
   async function loadAdminPanel() {
-    const { data: profiles } = await supabaseClient.from('profiles').select('*').order('created_at');
+    const { data: profiles } = await sb.from('profiles').select('*').order('created_at');
     const container = document.getElementById('adminContent');
     
     if (!profiles || profiles.length === 0) {
@@ -1274,7 +1389,7 @@
 
   async function updateUserProfile(userId) {
     const role = document.getElementById(`role_${userId}`).value;
-    const { error } = await supabaseClient.rpc('admin_create_profile', {
+    const { error } = await sb.rpc('admin_create_profile', {
       p_id: userId, p_email: '', p_name: '', p_role: role
     });
     if (error) showToast('更新失败: ' + error.message, 'danger');
@@ -1283,7 +1398,7 @@
 
   async function toggleUserStatus(userId, currentStatus) {
     const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
-    const { error } = await supabaseClient.rpc('admin_update_user_status', { user_id: userId, new_status: newStatus });
+    const { error } = await sb.rpc('admin_update_user_status', { user_id: userId, new_status: newStatus });
     if (error) showToast('操作失败: ' + error.message, 'danger');
     else { showToast('✅ 已更新', 'success'); loadAdminPanel(); }
   }
