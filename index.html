@@ -351,10 +351,21 @@
   const SUPABASE_URL = 'https://cgeqreslzrdccdisaloe.supabase.co';
   const SUPABASE_ANON_KEY = 'sb_publishable_ecTsaTKF0-wM7lSPDDleZA_Ji-i3HuW';
   var supabaseClient = null;
-try { supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-      auth: { persistSession: true, autoRefreshToken: true }
-    });
-  } catch(e) { console.error('Supabase init error:', e); }
+  function initSupabase() {
+    if (window.supabase && window.supabase.createClient) {
+      try {
+        supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+          auth: { persistSession: true, autoRefreshToken: true }
+        });
+        return true;
+      } catch(e) {
+        console.error('Supabase init error:', e);
+        return false;
+      }
+    }
+    return false;
+  }
+  initSupabase();
 
   // ============================================================
   // 状态管理
