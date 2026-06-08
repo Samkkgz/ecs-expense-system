@@ -395,7 +395,7 @@ async function init() {
   // 鉴权辅助函数（使用 Supabase SDK，与 OGD 项目一致）
   // ============================================================
   function sendMagicLink(email) {
-    return sb.auth.signInWithOtp({ email: email, options: { shouldCreateUser: true } });
+    return sb.auth.signInWithOtp({ email: email, options: { shouldCreateUser: true, redirectTo: "https://samkkgz.github.io/ecs-expense-system/" } });
   }
   function checkSession() {
     return sb.auth.getSession();
