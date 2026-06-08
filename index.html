@@ -346,18 +346,9 @@ document.addEventListener('click', function(e) {
 });
 
 async function init() {
-    // Check session
-    var { data: { session } } = await checkSession();
-    if (session) {
-      currentUser = session.user;
-      showApp();
-    } else {
-      document.getElementById('loginPage').style.display = 'flex';
-    }
-
-    // Listen for auth state changes
+    // Listen for auth state changes FIRST (before checking session)
     sb.auth.onAuthStateChange(function(event, session) {
-      if (event === 'SIGNED_IN' && session) {
+      if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION') && session) {
         currentUser = session.user;
         showApp();
       } else if (event === 'SIGNED_OUT') {
@@ -366,6 +357,15 @@ async function init() {
         document.getElementById('appLayout').classList.remove('active');
       }
     });
+
+    // Then check session
+    var { data: { session } } = await checkSession();
+    if (session) {
+      currentUser = session.user;
+      showApp();
+    } else {
+      document.getElementById('loginPage').style.display = 'flex';
+    }
 
     // Sidebar navigation
     document.querySelectorAll('.nav-item[data-page]').forEach(btn => {
