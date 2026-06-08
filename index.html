@@ -521,9 +521,9 @@ async function init() {
       months.push({ value: `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`, label: `${d.getFullYear()}年${d.getMonth()+1}月` });
     }
 
-    document.getElementById('uploadMonth').innerHTML = months.map(m => 
-      `<option value="${m.value}" ${i===0?'selected':''}>${m.label}</option>`
-    ).join('');
+    document.getElementById('uploadMonth').innerHTML = months.map(function(m, idx) { 
+      return `<option value="${m.value}" ${idx===0?'selected':''}>${m.label}</option>`; 
+    }).join('');
 
     const filterMonth = document.getElementById('filterMonth');
     filterMonth.innerHTML = '<option value="">全部月份</option>' + months.map(m => 
@@ -758,7 +758,11 @@ async function init() {
     progress.classList.add('active');
     resultDiv.innerHTML = '';
     
-    const month = document.getElementById('uploadMonth').value; // YYYY-MM
+    var month = document.getElementById('uploadMonth').value; // YYYY-MM
+    if (!month) {
+      var d = new Date();
+      month = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+    }
     const categoryId = document.getElementById('uploadCategory').value;
     const location = document.getElementById('uploadLocation').value;
     const [year, mon] = month.split('-');
