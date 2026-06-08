@@ -1,0 +1,1259 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ECS 报销管理系统</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11/font/bootstrap-icons.css">
+  <style>
+    :root { --sidebar-width: 240px; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f0f2f5; }
+    
+    /* Login */
+    .login-page { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+    .login-card { background: white; border-radius: 16px; padding: 40px; width: 400px; max-width: 90vw; box-shadow: 0 20px 60px rgba(0,0,0,0.15); }
+    .login-card h1 { font-size: 24px; font-weight: 700; margin-bottom: 8px; }
+    .login-card p { color: #666; margin-bottom: 24px; }
+    
+    /* Layout */
+    .app-layout { display: none; min-height: 100vh; }
+    .app-layout.active { display: flex; }
+    
+    /* Sidebar */
+    .sidebar { width: var(--sidebar-width); background: #1a1a2e; color: white; padding: 0; position: fixed; top: 0; left: 0; height: 100vh; z-index: 100; display: flex; flex-direction: column; }
+    .sidebar-header { padding: 20px; border-bottom: 1px solid rgba(255,255,255,0.1); }
+    .sidebar-header h2 { font-size: 18px; font-weight: 700; }
+    .sidebar-header small { color: rgba(255,255,255,0.6); }
+    .sidebar-nav { flex: 1; padding: 12px 0; overflow-y: auto; }
+    .nav-item { display: flex; align-items: center; gap: 12px; padding: 12px 20px; color: rgba(255,255,255,0.7); cursor: pointer; transition: all 0.2s; border: none; background: none; width: 100%; text-align: left; font-size: 14px; }
+    .nav-item:hover { background: rgba(255,255,255,0.08); color: white; }
+    .nav-item.active { background: rgba(255,255,255,0.12); color: white; border-right: 3px solid #667eea; }
+    .nav-item i { font-size: 18px; width: 24px; text-align: center; }
+    .sidebar-footer { padding: 16px 20px; border-top: 1px solid rgba(255,255,255,0.1); }
+    .user-info { font-size: 13px; color: rgba(255,255,255,0.7); }
+    .user-info strong { color: white; display: block; }
+    .logout-btn { margin-top: 8px; font-size: 12px; color: rgba(255,255,255,0.5); cursor: pointer; background: none; border: none; padding: 0; }
+    .logout-btn:hover { color: #ff6b6b; }
+    
+    /* Main Content */
+    .main-content { margin-left: var(--sidebar-width); flex: 1; padding: 24px; min-height: 100vh; }
+    .page-header { margin-bottom: 24px; }
+    .page-header h1 { font-size: 24px; font-weight: 700; }
+    .page-header p { color: #666; }
+    
+    /* Cards */
+    .stat-card { background: white; border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); transition: transform 0.2s; }
+    .stat-card:hover { transform: translateY(-2px); }
+    .stat-card .icon { width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 24px; margin-bottom: 12px; }
+    .stat-card .value { font-size: 28px; font-weight: 700; margin-bottom: 4px; }
+    .stat-card .label { color: #666; font-size: 13px; }
+    
+    .section-card { background: white; border-radius: 12px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); margin-bottom: 24px; }
+    .section-card h5 { font-weight: 600; margin-bottom: 16px; }
+    
+    /* Upload zone */
+    .upload-zone { border: 2px dashed #ddd; border-radius: 12px; padding: 40px; text-align: center; cursor: pointer; transition: all 0.3s; background: #fafafa; }
+    .upload-zone:hover, .upload-zone.dragover { border-color: #667eea; background: #f0f0ff; }
+    .upload-zone i { font-size: 48px; color: #667eea; margin-bottom: 12px; }
+    .upload-zone p { color: #666; margin: 0; }
+    .upload-progress { margin-top: 16px; display: none; }
+    .upload-progress.active { display: block; }
+    
+    /* Tables */
+    .table { margin: 0; }
+    .table th { font-weight: 600; font-size: 13px; color: #666; border-top: none; }
+    .table td { vertical-align: middle; font-size: 14px; }
+    
+    /* Filters */
+    .filter-bar { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+    .filter-bar select, .filter-bar input { padding: 8px 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; }
+    .filter-bar select:focus, .filter-bar input:focus { outline: none; border-color: #667eea; }
+    
+    /* Preview modal */
+    .invoice-preview { max-width: 100%; max-height: 70vh; border-radius: 8px; }
+    
+    /* Report section */
+    .report-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    
+    /* Badge */
+    .badge-status { font-size: 12px; padding: 4px 8px; border-radius: 6px; }
+    .badge-pending { background: #fff3cd; color: #856404; }
+    .badge-approved { background: #d4edda; color: #155724; }
+    
+    /* Page sections */
+    .page-section { display: none; }
+    .page-section.active { display: block; }
+    
+    /* Responsive */
+    @media (max-width: 768px) {
+      .sidebar { width: 60px; }
+      .sidebar-header h2, .sidebar-header small, .nav-item span, .user-info, .sidebar-footer { display: none; }
+      .nav-item { justify-content: center; padding: 14px; }
+      .main-content { margin-left: 60px; padding: 16px; }
+      .stat-card .value { font-size: 22px; }
+    }
+
+    .toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 9999; }
+  </style>
+</head>
+<body>
+  <!-- Login Page -->
+  <div class="login-page" id="loginPage">
+    <div class="login-card">
+      <h1>ECS 报销管理系统</h1>
+      <p>请登录以访问报销管理面板</p>
+      <div id="loginEmailGroup" class="mb-3">
+        <label class="form-label">邮箱地址</label>
+        <input type="email" class="form-control" id="loginEmail" placeholder="your@email.com">
+      </div>
+      <div id="loginPasswordGroup" class="mb-3" style="display:none">
+        <label class="form-label">密码</label>
+        <input type="password" class="form-control" id="loginPassword" placeholder="密码">
+      </div>
+      <button class="btn btn-primary w-100" id="loginBtn" onclick="handleLogin()">
+        <i class="bi bi-envelope"></i> 发送登录链接
+      </button>
+      <p class="text-center mt-3" style="font-size:13px;color:#999">
+        <span id="loginHint">首次使用请先登录，系统将发送验证链接到您的邮箱</span>
+      </p>
+    </div>
+  </div>
+
+  <!-- App Layout -->
+  <div class="app-layout" id="appLayout">
+    <!-- Sidebar -->
+    <nav class="sidebar">
+      <div class="sidebar-header">
+        <h2>📋 ECS 报销</h2>
+        <small>费用管理系统</small>
+      </div>
+      <div class="sidebar-nav">
+        <button class="nav-item active" data-page="dashboard">
+          <i class="bi bi-grid-1x2"></i><span>总览面板</span>
+        </button>
+        <button class="nav-item" data-page="upload">
+          <i class="bi bi-cloud-upload"></i><span>上传发票</span>
+        </button>
+        <button class="nav-item" data-page="invoices">
+          <i class="bi bi-receipt"></i><span>发票管理</span>
+        </button>
+        <button class="nav-item" data-page="reports">
+          <i class="bi bi-bar-chart"></i><span>统计报表</span>
+        </button>
+        <button class="nav-item" data-page="categories">
+          <i class="bi bi-tags"></i><span>类目管理</span>
+        </button>
+        <button class="nav-item" data-page="admin" id="adminNavItem" style="display:none">
+          <i class="bi bi-shield"></i><span>管理员</span>
+        </button>
+      </div>
+      <div class="sidebar-footer">
+        <div class="user-info">
+          <strong id="userName">用户</strong>
+          <span id="userEmail"></span>
+        </div>
+        <button class="logout-btn" onclick="handleLogout()"><i class="bi bi-box-arrow-right"></i> 退出登录</button>
+      </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main-content">
+      <!-- Dashboard -->
+      <div class="page-section active" id="page-dashboard">
+        <div class="page-header">
+          <h1>总览面板</h1>
+          <p>费用支出概览 <span id="dashYearLabel"></span></p>
+        </div>
+        <div class="row g-3 mb-4">
+          <div class="col-md-3 col-6"><div class="stat-card"><div class="icon" style="background:#e8f5e9;color:#2e7d32"><i class="bi bi-cash-stack"></i></div><div class="value" id="dashTotal">¥0</div><div class="label">本年总支出</div></div></div>
+          <div class="col-md-3 col-6"><div class="stat-card"><div class="icon" style="background:#e3f2fd;color:#1565c0"><i class="bi bi-file-earmark-text"></i></div><div class="value" id="dashCount">0</div><div class="label">发票总数</div></div></div>
+          <div class="col-md-3 col-6"><div class="stat-card"><div class="icon" style="background:#fff3e0;color:#e65100"><i class="bi bi-calendar-month"></i></div><div class="value" id="dashMonthly">¥0</div><div class="label">本月支出</div></div></div>
+          <div class="col-md-3 col-6"><div class="stat-card"><div class="icon" style="background:#f3e5f5;color:#6a1b9a"><i class="bi bi-building"></i></div><div class="value" id="dashQuarterly">¥0</div><div class="label">本季支出</div></div></div>
+        </div>
+        <div class="row g-3">
+          <div class="col-md-8">
+            <div class="section-card">
+              <h5>月度支出趋势</h5>
+              <canvas id="monthlyChart" height="250"></canvas>
+            </div>
+          </div>
+          <div class="col-md-4">
+            <div class="section-card">
+              <h5>类目分布</h5>
+              <canvas id="categoryChart" height="250"></canvas>
+            </div>
+          </div>
+        </div>
+        <div class="section-card mt-3">
+          <h5>季度统计</h5>
+          <div class="row g-2" id="quarterlyCards"></div>
+        </div>
+        <div class="section-card mt-3">
+          <h5>最近发票</h5>
+          <div id="recentInvoices"><p class="text-muted">加载中...</p></div>
+        </div>
+      </div>
+
+      <!-- Upload -->
+      <div class="page-section" id="page-upload">
+        <div class="page-header"><h1>上传发票</h1><p>拖拽或选择PDF发票文件到下方区域</p></div>
+        <div class="section-card">
+          <div class="row g-3 mb-3">
+            <div class="col-md-4">
+              <label class="form-label">归属月份</label>
+              <select class="form-select" id="uploadMonth"></select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">费用类目</label>
+              <select class="form-select" id="uploadCategory"><option value="">自动识别</option></select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">项目地点</label>
+              <input class="form-control" id="uploadLocation" placeholder="如：广州、上海">
+            </div>
+          </div>
+          <div class="upload-zone" id="uploadZone" onclick="document.getElementById('fileInput').click()">
+            <i class="bi bi-cloud-arrow-up"></i>
+            <h5>点击或拖拽上传</h5>
+            <p>支持 PDF 格式的电子发票</p>
+          </div>
+          <input type="file" id="fileInput" accept=".pdf" multiple style="display:none" onchange="handleFileSelect(event)">
+          <div class="upload-progress" id="uploadProgress">
+            <div class="progress"><div class="progress-bar" id="progressBar" style="width:0%">0%</div></div>
+            <p class="mt-2 text-muted" id="uploadStatus">准备上传...</p>
+          </div>
+          <div id="uploadResult" class="mt-3"></div>
+        </div>
+      </div>
+
+      <!-- Invoices -->
+      <div class="page-section" id="page-invoices">
+        <div class="page-header"><h1>发票管理</h1><p>查看和管理所有发票记录</p></div>
+        <div class="section-card">
+          <div class="filter-bar" id="invoiceFilters">
+            <select id="filterMonth"><option value="">全部月份</option></select>
+            <select id="filterCategory"><option value="">全部类目</option></select>
+            <select id="filterStatus"><option value="">全部状态</option><option value="pending">待审核</option><option value="approved">已通过</option><option value="rejected">已驳回</option></select>
+            <input type="text" id="filterSearch" placeholder="🔍 搜索发票号码/商家..." style="flex:1;min-width:150px">
+            <button class="btn btn-outline-primary btn-sm" onclick="exportInvoices()"><i class="bi bi-download"></i> 导出Excel</button>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-hover">
+              <thead><tr>
+                <th>发票号码</th><th>日期</th><th>商家</th><th>金额</th><th>类目</th><th>状态</th><th>操作</th>
+              </tr></thead>
+              <tbody id="invoiceTableBody"></tbody>
+            </table>
+          </div>
+          <nav id="invoicePagination"><ul class="pagination pagination-sm justify-content-center mt-3"></ul></nav>
+        </div>
+      </div>
+
+      <!-- Reports -->
+      <div class="page-section" id="page-reports">
+        <div class="page-header">
+          <h1>统计报表</h1>
+          <p>月度 / 季度 / 年度费用分析</p>
+        </div>
+        <div class="section-card">
+          <ul class="nav nav-tabs mb-3" id="reportTabs">
+            <li class="nav-item"><button class="nav-link active" data-period="monthly" onclick="switchReport('monthly')">月度报表</button></li>
+            <li class="nav-item"><button class="nav-link" data-period="quarterly" onclick="switchReport('quarterly')">季度报表</button></li>
+            <li class="nav-item"><button class="nav-link" data-period="annual" onclick="switchReport('annual')">年度报表</button></li>
+          </ul>
+          <div class="report-actions mb-3">
+            <select id="reportYearSelector" class="form-select form-select-sm" style="width:auto"></select>
+            <select id="reportPeriodSelector" class="form-select form-select-sm" style="width:auto"></select>
+            <button class="btn btn-primary btn-sm" onclick="refreshReport()"><i class="bi bi-arrow-clockwise"></i> 刷新</button>
+            <button class="btn btn-success btn-sm" onclick="exportReport()"><i class="bi bi-file-earmark-excel"></i> 导出报表</button>
+          </div>
+          <div id="reportContent"></div>
+        </div>
+      </div>
+
+      <!-- Categories -->
+      <div class="page-section" id="page-categories">
+        <div class="page-header"><h1>费用类目</h1><p>管理报销费用分类</p></div>
+        <div class="section-card"><div id="categoryList"></div></div>
+      </div>
+
+      <!-- Admin -->
+      <div class="page-section" id="page-admin">
+        <div class="page-header"><h1>管理员面板</h1><p>用户和系统管理</p></div>
+        <div class="section-card" id="adminContent"></div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Invoice Edit Modal -->
+  <div class="modal fade" id="invoiceModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header"><h5 class="modal-title">发票详情</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+        <div class="modal-body" id="invoiceModalBody"></div>
+        <div class="modal-footer">
+          <button class="btn btn-success" onclick="approveInvoice()"><i class="bi bi-check-circle"></i> 通过</button>
+          <button class="btn btn-warning" onclick="rejectInvoice()"><i class="bi bi-x-circle"></i> 驳回</button>
+          <button class="btn btn-primary" onclick="saveInvoiceEdit()"><i class="bi bi-save"></i> 保存修改</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast container -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+  // ============================================================
+  // Supabase 配置（部署时替换）
+  // ============================================================
+  const SUPABASE_URL = 'https://YOUR_PROJECT.supabase.co';
+  const SUPABASE_ANON_KEY = 'YOUR_ANON_KEY';
+  const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { persistSession: true, autoRefreshToken: true }
+  });
+
+  // ============================================================
+  // 状态管理
+  // ============================================================
+  let currentUser = null;
+  let currentPage = 'dashboard';
+  let editingInvoiceId = null;
+  let categories = [];
+  let monthlyChart = null;
+  let categoryChart = null;
+  const PAGE_SIZE = 20;
+  let currentPageNum = 1;
+
+  // ============================================================
+  // 初始化
+  // ============================================================
+  document.addEventListener('DOMContentLoaded', init);
+
+  async function init() {
+    // Check session
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session) {
+      currentUser = session.user;
+      showApp();
+    } else {
+      document.getElementById('loginPage').style.display = 'flex';
+    }
+
+    // Listen for auth state changes
+    supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_IN' && session) {
+        currentUser = session.user;
+        showApp();
+      } else if (event === 'SIGNED_OUT') {
+        currentUser = null;
+        document.getElementById('loginPage').style.display = 'flex';
+        document.getElementById('appLayout').classList.remove('active');
+      }
+    });
+
+    // Sidebar navigation
+    document.querySelectorAll('.nav-item[data-page]').forEach(btn => {
+      btn.addEventListener('click', () => navigateTo(btn.dataset.page));
+    });
+
+    // Setup drag-and-drop upload
+    const zone = document.getElementById('uploadZone');
+    zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
+    zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+    zone.addEventListener('drop', e => { e.preventDefault(); zone.classList.remove('dragover'); handleFiles(e.dataTransfer.files); });
+
+    // Search with debounce
+    let searchTimer;
+    document.getElementById('filterSearch').addEventListener('input', () => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => { currentPageNum = 1; loadInvoices(); }, 300);
+    });
+
+    // Month/filter selects
+    document.getElementById('filterMonth').addEventListener('change', () => { currentPageNum = 1; loadInvoices(); });
+    document.getElementById('filterCategory').addEventListener('change', () => { currentPageNum = 1; loadInvoices(); });
+    document.getElementById('filterStatus').addEventListener('change', () => { currentPageNum = 1; loadInvoices(); });
+  }
+
+  // ============================================================
+  // 登录/登出
+  // ============================================================
+  async function handleLogin() {
+    const email = document.getElementById('loginEmail').value.trim();
+    if (!email) return showToast('请输入邮箱地址', 'warning');
+
+    const btn = document.getElementById('loginBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 处理中...';
+
+    try {
+      // Try password-less magic link first
+      const { error } = await supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: true } });
+      if (error) throw error;
+      document.getElementById('loginHint').textContent = '✅ 登录链接已发送到您的邮箱，请查收';
+      showToast('验证链接已发送到您的邮箱 ✉️', 'success');
+    } catch (e) {
+      showToast('登录失败: ' + e.message, 'danger');
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-envelope"></i> 发送登录链接';
+    }
+  }
+
+  async function handleLogout() {
+    await supabase.auth.signOut();
+    document.getElementById('loginPage').style.display = 'flex';
+    document.getElementById('appLayout').classList.remove('active');
+  }
+
+  // ============================================================
+  // 应用加载
+  // ============================================================
+  async function showApp() {
+    document.getElementById('loginPage').style.display = 'none';
+    document.getElementById('appLayout').classList.add('active');
+    document.getElementById('userEmail').textContent = currentUser.email;
+
+    // Check user profile/role
+    const { data: profile } = await supabase.from('profiles').select('*').eq('id', currentUser.id).single();
+    if (profile) {
+      document.getElementById('userName').textContent = profile.name || profile.email;
+      if (profile.role === 'admin' || profile.role === 'super_admin') {
+        document.getElementById('adminNavItem').style.display = 'flex';
+      }
+    } else {
+      document.getElementById('userName').textContent = currentUser.email;
+    }
+
+    await loadCategories();
+    await loadDashboard();
+    await loadFilters();
+    await loadMonthOptions();
+  }
+
+  // ============================================================
+  // 导航
+  // ============================================================
+  function navigateTo(page) {
+    currentPage = page;
+    document.querySelectorAll('.nav-item[data-page]').forEach(b => b.classList.remove('active'));
+    document.querySelector(`.nav-item[data-page="${page}"]`)?.classList.add('active');
+    document.querySelectorAll('.page-section').forEach(s => s.classList.remove('active'));
+    document.getElementById(`page-${page}`)?.classList.add('active');
+
+    // Lazy load page data
+    switch(page) {
+      case 'dashboard': loadDashboard(); break;
+      case 'invoices': loadInvoices(); break;
+      case 'reports': loadReportData(); break;
+      case 'categories': loadCategoryManagement(); break;
+      case 'admin': loadAdminPanel(); break;
+    }
+  }
+
+  // ============================================================
+  // 加载分类
+  // ============================================================
+  async function loadCategories() {
+    const { data } = await supabase.from('expense_categories').select('*').order('sort_order');
+    if (data) {
+      categories = data;
+      const selects = ['uploadCategory', 'filterCategory'];
+      selects.forEach(id => {
+        const sel = document.getElementById(id);
+        if (!sel) return;
+        const currentVal = sel.value;
+        sel.innerHTML = id === 'uploadCategory' ? '<option value="">自动识别</option>' : '<option value="">全部类目</option>';
+        data.forEach(c => {
+          sel.innerHTML += `<option value="${c.id}">${c.name}</option>`;
+        });
+        sel.value = currentVal;
+      });
+    }
+  }
+
+  // ============================================================
+  // 月份选项
+  // ============================================================
+  function loadMonthOptions() {
+    const now = new Date();
+    const selects = ['uploadMonth', 'filterMonth', 'reportYearSelector'];
+    const months = [];
+    for (let i = 0; i < 12; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      months.push({ value: `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`, label: `${d.getFullYear()}年${d.getMonth()+1}月` });
+    }
+
+    document.getElementById('uploadMonth').innerHTML = months.map(m => 
+      `<option value="${m.value}" ${i===0?'selected':''}>${m.label}</option>`
+    ).join('');
+
+    const filterMonth = document.getElementById('filterMonth');
+    filterMonth.innerHTML = '<option value="">全部月份</option>' + months.map(m => 
+      `<option value="${m.value}">${m.label}</option>`
+    ).join('');
+
+    // Year selector for reports
+    const years = [];
+    for (let y = now.getFullYear(); y >= 2024; y--) years.push(y);
+    document.getElementById('reportYearSelector').innerHTML = years.map(y => 
+      `<option value="${y}" ${y===now.getFullYear()?'selected':''}>${y}年</option>`
+    ).join('');
+    document.getElementById('reportYearSelector').onchange = () => updateReportPeriods();
+    updateReportPeriods();
+  }
+
+  function updateReportPeriods() {
+    const year = parseInt(document.getElementById('reportYearSelector').value);
+    const reportType = document.querySelector('#reportTabs .nav-link.active').dataset.period;
+    const sel = document.getElementById('reportPeriodSelector');
+    
+    if (reportType === 'monthly') {
+      sel.innerHTML = Array.from({length:12}, (_,i) => {
+        const m = String(i+1).padStart(2,'0');
+        return `<option value="${year}-${m}">${year}年${i+1}月</option>`;
+      }).join('');
+    } else if (reportType === 'quarterly') {
+      sel.innerHTML = ['Q1','Q2','Q3','Q4'].map((q,i) => 
+        `<option value="${year}-${q}">${year}年 第${i+1}季度</option>`
+      ).join('');
+    } else {
+      sel.innerHTML = `<option value="${year}">${year}年</option>`;
+    }
+  }
+
+  function switchReport(type) {
+    document.querySelectorAll('#reportTabs .nav-link').forEach(t => t.classList.remove('active'));
+    document.querySelector(`#reportTabs .nav-link[data-period="${type}"]`).classList.add('active');
+    updateReportPeriods();
+    loadReportData();
+  }
+
+  // ============================================================
+  // 过滤条件加载
+  // ============================================================
+  async function loadFilters() {
+    // Populated in loadMonthOptions and loadCategories
+  }
+
+  // ============================================================
+  // DASHBOARD
+  // ============================================================
+  async function loadDashboard() {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const quarter = Math.ceil((now.getMonth() + 1) / 3);
+    
+    document.getElementById('dashYearLabel').textContent = `- ${year}年`;
+
+    // Annual stats
+    const { data: annualInvoices } = await supabase
+      .from('invoices')
+      .select('total_amount, category_id, invoice_date')
+      .gte('invoice_date', `${year}-01-01`)
+      .lte('invoice_date', `${year}-12-31`)
+      .eq('status', 'approved');
+
+    if (annualInvoices) {
+      const total = annualInvoices.reduce((s, i) => s + parseFloat(i.total_amount || 0), 0);
+      document.getElementById('dashTotal').textContent = `¥${total.toFixed(2)}`;
+      document.getElementById('dashCount').textContent = annualInvoices.length;
+
+      // Monthly
+      const monthlyInvoices = annualInvoices.filter(i => i.invoice_date && i.invoice_date.startsWith(`${year}-${month}`));
+      const monthlyTotal = monthlyInvoices.reduce((s, i) => s + parseFloat(i.total_amount || 0), 0);
+      document.getElementById('dashMonthly').textContent = `¥${monthlyTotal.toFixed(2)}`;
+
+      // Quarterly
+      const qStart = `${year}-${String((quarter-1)*3+1).padStart(2,'0')}-01`;
+      const qEnd = `${year}-${String(quarter*3).padStart(2,'0')}-31`;
+      const qInvoices = annualInvoices.filter(i => i.invoice_date >= qStart && i.invoice_date <= qEnd);
+      const qTotal = qInvoices.reduce((s, i) => s + parseFloat(i.total_amount || 0), 0);
+      document.getElementById('dashQuarterly').textContent = `¥${qTotal.toFixed(2)}`;
+
+      // Monthly trend chart
+      const monthlyTotals = Array(12).fill(0);
+      annualInvoices.forEach(inv => {
+        if (inv.invoice_date) {
+          const m = parseInt(inv.invoice_date.split('-')[1]) - 1;
+          monthlyTotals[m] += parseFloat(inv.total_amount || 0);
+        }
+      });
+      renderMonthlyChart(monthlyTotals, year);
+
+      // Category distribution chart
+      const catTotals = {};
+      annualInvoices.forEach(inv => {
+        catTotals[inv.category_id] = (catTotals[inv.category_id] || 0) + parseFloat(inv.total_amount || 0);
+      });
+      renderCategoryChart(catTotals);
+
+      // Quarterly cards
+      const quarters = [1,2,3,4];
+      const qCards = document.getElementById('quarterlyCards');
+      qCards.innerHTML = quarters.map(q => {
+        const qInvs = annualInvoices.filter(i => {
+          if (!i.invoice_date) return false;
+          const m = parseInt(i.invoice_date.split('-')[1]);
+          return Math.ceil(m/3) === q;
+        });
+        const qAmt = qInvs.reduce((s,i) => s + parseFloat(i.total_amount||0), 0);
+        const qCnt = qInvs.length;
+        return `<div class="col-md-3 col-6"><div class="stat-card p-3">
+          <div class="label">Q${q} (${(q-1)*3+1}-${q*3}月)</div>
+          <div class="value" style="font-size:20px">¥${qAmt.toFixed(2)}</div>
+          <div class="label">${qCnt} 张发票</div>
+        </div></div>`;
+      }).join('');
+    }
+
+    // Recent invoices
+    const { data: recent } = await supabase
+      .from('invoices')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(5);
+    
+    if (recent) {
+      const container = document.getElementById('recentInvoices');
+      if (recent.length === 0) {
+        container.innerHTML = '<p class="text-muted">暂无发票记录</p>';
+      } else {
+        container.innerHTML = `<div class="table-responsive"><table class="table table-sm">
+          <tr>${recent.map(inv => {
+            const cat = categories.find(c => c.id === inv.category_id);
+            return `<tr><td>${inv.invoice_number || '-'}</td><td>${inv.invoice_date || '-'}</td><td>${inv.seller_name || '-'}</td><td><strong>¥${parseFloat(inv.total_amount||0).toFixed(2)}</strong></td><td><span class="badge bg-secondary">${cat?.name || '未分类'}</span></td></tr>`;
+          }).join('')}</table></div>`;
+      }
+    }
+  }
+
+  function renderMonthlyChart(data, year) {
+    const ctx = document.getElementById('monthlyChart').getContext('2d');
+    if (monthlyChart) monthlyChart.destroy();
+    monthlyChart = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'],
+        datasets: [{
+          label: '支出 (¥)',
+          data,
+          backgroundColor: 'rgba(102,126,234,0.6)',
+          borderColor: '#667eea',
+          borderWidth: 2,
+          borderRadius: 4
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: { y: { beginAtZero: true, ticks: { callback: v => '¥' + v.toLocaleString() } } }
+      }
+    });
+  }
+
+  function renderCategoryChart(catTotals) {
+    const ctx = document.getElementById('categoryChart').getContext('2d');
+    if (categoryChart) categoryChart.destroy();
+    
+    const labels = [];
+    const data = [];
+    const colors = ['#667eea','#764ba2','#f093fb','#4facfe','#43e97b','#fa709a','#a18cd1','#fbc2eb'];
+    
+    Object.entries(catTotals).forEach(([catId, total]) => {
+      const cat = categories.find(c => c.id == catId);
+      labels.push(cat?.name || `类目#${catId}`);
+      data.push(total);
+    });
+
+    categoryChart = new Chart(ctx, {
+      type: 'doughnut',
+      data: {
+        labels,
+        datasets: [{ data, backgroundColor: colors.slice(0, labels.length) }]
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { position: 'bottom', labels: { font: { size: 11 } } }
+        }
+      }
+    });
+  }
+
+  // ============================================================
+  // UPLOAD
+  // ============================================================
+  function handleFileSelect(e) {
+    handleFiles(e.target.files);
+  }
+
+  async function handleFiles(files) {
+    const progress = document.getElementById('uploadProgress');
+    const bar = document.getElementById('progressBar');
+    const status = document.getElementById('uploadStatus');
+    const resultDiv = document.getElementById('uploadResult');
+    
+    progress.classList.add('active');
+    resultDiv.innerHTML = '';
+    
+    const month = document.getElementById('uploadMonth').value; // YYYY-MM
+    const categoryId = document.getElementById('uploadCategory').value;
+    const location = document.getElementById('uploadLocation').value;
+    const [year, mon] = month.split('-');
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (!file.name.toLowerCase().endsWith('.pdf')) {
+        resultDiv.innerHTML += `<div class="alert alert-warning">⏭ 跳过非PDF文件: ${file.name}</div>`;
+        continue;
+      }
+
+      const pct = Math.round(((i) / files.length) * 100);
+      bar.style.width = `${pct}%`;
+      bar.textContent = `${pct}%`;
+      status.textContent = `正在上传 (${i+1}/${files.length}): ${file.name}`;
+
+      try {
+        // Upload to Supabase Storage
+        const storagePath = `invoices/${year}/${mon}/${Date.now()}_${file.name}`;
+        const { error: uploadError } = await supabase.storage
+          .from('invoices')
+          .upload(storagePath, file, { contentType: 'application/pdf', upsert: false });
+
+        if (uploadError) throw uploadError;
+
+        // Create invoice record
+        const { error: insertError } = await supabase
+          .from('invoices')
+          .insert({
+            storage_path: storagePath,
+            original_filename: file.name,
+            file_size: file.size,
+            category_id: categoryId || null,
+            project_location: location || null,
+            uploaded_by: currentUser.id,
+            status: 'pending',
+            // Will be filled by Edge Function OCR
+          });
+
+        if (insertError) throw insertError;
+
+        resultDiv.innerHTML += `<div class="alert alert-success">✅ 上传成功: ${file.name}</div>`;
+      } catch (e) {
+        resultDiv.innerHTML += `<div class="alert alert-danger">❌ 上传失败 ${file.name}: ${e.message}</div>`;
+      }
+    }
+
+    bar.style.width = '100%';
+    bar.textContent = '100%';
+    status.textContent = '上传完成！可以在发票管理中查看';
+
+    // Refresh data
+    loadInvoices();
+    loadDashboard();
+  }
+
+  // ============================================================
+  // INVOICES
+  // ============================================================
+  let allInvoices = [];
+
+  async function loadInvoices() {
+    const filterMonth = document.getElementById('filterMonth').value;
+    const filterCategory = document.getElementById('filterCategory').value;
+    const filterStatus = document.getElementById('filterStatus').value;
+    const search = document.getElementById('filterSearch').value.trim();
+
+    let query = supabase.from('invoices').select('*', { count: 'exact' });
+    
+    if (filterMonth) {
+      query = query.gte('invoice_date', `${filterMonth}-01`).lte('invoice_date', `${filterMonth}-31`);
+    }
+    if (filterCategory) query = query.eq('category_id', filterCategory);
+    if (filterStatus) query = query.eq('status', filterStatus);
+    
+    query = query.order('created_at', { ascending: false });
+    
+    // For search, we need to filter client-side
+    const { data, count, error } = await query;
+    
+    if (error) {
+      document.getElementById('invoiceTableBody').innerHTML = `<tr><td colspan="7" class="text-danger">${error.message}</td></tr>`;
+      return;
+    }
+
+    allInvoices = data || [];
+    
+    // Client-side search
+    let filtered = allInvoices;
+    if (search) {
+      const s = search.toLowerCase();
+      filtered = allInvoices.filter(inv => 
+        (inv.invoice_number && inv.invoice_number.toLowerCase().includes(s)) ||
+        (inv.seller_name && inv.seller_name.toLowerCase().includes(s)) ||
+        (inv.buyer_name && inv.buyer_name.toLowerCase().includes(s)) ||
+        (inv.item_description && inv.item_description.toLowerCase().includes(s))
+      );
+    }
+
+    // Pagination
+    const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
+    if (currentPageNum > totalPages) currentPageNum = 1;
+    const start = (currentPageNum - 1) * PAGE_SIZE;
+    const pageData = filtered.slice(start, start + PAGE_SIZE);
+
+    // Render table
+    const tbody = document.getElementById('invoiceTableBody');
+    if (pageData.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">暂无发票记录</td></tr>';
+    } else {
+      tbody.innerHTML = pageData.map(inv => {
+        const cat = categories.find(c => c.id === inv.category_id);
+        const statusBadge = inv.status === 'approved' ? 'badge-approved' : inv.status === 'rejected' ? 'bg-danger' : 'badge-pending';
+        const statusText = inv.status === 'approved' ? '已通过' : inv.status === 'rejected' ? '已驳回' : '待审核';
+        return `<tr>
+          <td><small>${inv.invoice_number || '-'}</small></td>
+          <td><small>${inv.invoice_date || '-'}</small></td>
+          <td><small>${inv.seller_name ? inv.seller_name.substring(0, 20) : '-'}</small></td>
+          <td><strong>¥${parseFloat(inv.total_amount||0).toFixed(2)}</strong></td>
+          <td><span class="badge bg-secondary">${cat?.name || '未分类'}</span></td>
+          <td><span class="badge-status ${statusBadge}">${statusText}</span></td>
+          <td><button class="btn btn-sm btn-outline-primary" onclick="editInvoice(${inv.id})"><i class="bi bi-pencil"></i></button></td>
+        </tr>`;
+      }).join('');
+    }
+
+    // Pagination
+    const pag = document.querySelector('#invoicePagination ul');
+    if (totalPages <= 1) {
+      pag.innerHTML = '';
+    } else {
+      pag.innerHTML = Array.from({length: totalPages}, (_, i) => 
+        `<li class="page-item ${i+1 === currentPageNum ? 'active' : ''}">
+          <a class="page-link" href="#" onclick="currentPageNum=${i+1};loadInvoices();return false">${i+1}</a>
+        </li>`
+      ).join('');
+    }
+  }
+
+  // ============================================================
+  // INVOICE EDIT MODAL
+  // ============================================================
+  async function editInvoice(id) {
+    editingInvoiceId = id;
+    const inv = allInvoices.find(i => i.id === id);
+    if (!inv) return;
+
+    const modal = new bootstrap.Modal(document.getElementById('invoiceModal'));
+    
+    document.getElementById('invoiceModalBody').innerHTML = `
+      <div class="row g-3">
+        <div class="col-md-6">
+          <label class="form-label">发票号码</label>
+          <input class="form-control" id="editNumber" value="${inv.invoice_number || ''}">
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">开票日期</label>
+          <input class="form-control" id="editDate" type="date" value="${inv.invoice_date || ''}">
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">商家名称</label>
+          <input class="form-control" id="editSeller" value="${inv.seller_name || ''}">
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">金额（价税合计）</label>
+          <input class="form-control" id="editAmount" type="number" step="0.01" value="${inv.total_amount || ''}">
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">费用类目</label>
+          <select class="form-select" id="editCategory">
+            ${categories.map(c => `<option value="${c.id}" ${c.id === inv.category_id ? 'selected' : ''}>${c.name}</option>`).join('')}
+          </select>
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">项目地点</label>
+          <input class="form-control" id="editLocation" value="${inv.project_location || ''}">
+        </div>
+        <div class="col-12">
+          <label class="form-label">备注</label>
+          <input class="form-control" id="editNote" value="${inv.expense_note || ''}">
+        </div>
+        <div class="col-12">
+          <label class="form-label">项目描述</label>
+          <input class="form-control" id="editDescription" value="${inv.item_description || ''}">
+        </div>
+      </div>
+    `;
+    modal.show();
+  }
+
+  async function saveInvoiceEdit() {
+    if (!editingInvoiceId) return;
+    const updates = {
+      invoice_number: document.getElementById('editNumber').value,
+      invoice_date: document.getElementById('editDate').value || null,
+      seller_name: document.getElementById('editSeller').value,
+      total_amount: parseFloat(document.getElementById('editAmount').value) || 0,
+      category_id: parseInt(document.getElementById('editCategory').value),
+      project_location: document.getElementById('editLocation').value,
+      expense_note: document.getElementById('editNote').value,
+      item_description: document.getElementById('editDescription').value,
+      updated_at: new Date().toISOString()
+    };
+
+    const { error } = await supabase.from('invoices').update(updates).eq('id', editingInvoiceId);
+    if (error) {
+      showToast('保存失败: ' + error.message, 'danger');
+    } else {
+      showToast('✅ 保存成功', 'success');
+      bootstrap.Modal.getInstance(document.getElementById('invoiceModal')).hide();
+      loadInvoices();
+      loadDashboard();
+    }
+  }
+
+  async function approveInvoice() {
+    await updateInvoiceStatus('approved');
+  }
+
+  async function rejectInvoice() {
+    await updateInvoiceStatus('rejected');
+  }
+
+  async function updateInvoiceStatus(status) {
+    if (!editingInvoiceId) return;
+    const { error } = await supabase.from('invoices').update({ status, updated_at: new Date().toISOString() }).eq('id', editingInvoiceId);
+    if (error) {
+      showToast('操作失败', 'danger');
+    } else {
+      showToast(`✅ 已${status === 'approved' ? '通过' : '驳回'}`, 'success');
+      bootstrap.Modal.getInstance(document.getElementById('invoiceModal')).hide();
+      loadInvoices();
+      loadDashboard();
+    }
+  }
+
+  // ============================================================
+  // EXPORT
+  // ============================================================
+  async function exportInvoices() {
+    showToast('正在生成导出...', 'info');
+    try {
+      const { data } = await supabase.from('invoices').select('*').order('invoice_date', { ascending: false });
+      if (!data || data.length === 0) {
+        showToast('暂无数据可导出', 'warning');
+        return;
+      }
+
+      // Build CSV
+      const headers = ['发票号码', '开票日期', '商家名称', '购买方', '项目描述', '金额', '税额', '价税合计', '类目', '地点', '状态', '备注'];
+      const rows = data.map(inv => {
+        const cat = categories.find(c => c.id === inv.category_id);
+        return [inv.invoice_number, inv.invoice_date, inv.seller_name, inv.buyer_name, inv.item_description, 
+          inv.amount, inv.tax_amount, inv.total_amount, cat?.name || '', inv.project_location, inv.status, inv.expense_note]
+          .map(v => `"${v || ''}"`).join(',');
+      });
+      const csv = '\uFEFF' + headers.join(',') + '\n' + rows.join('\n');
+      
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `ECS报销明细_${new Date().toISOString().slice(0,10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('✅ 导出成功', 'success');
+    } catch (e) {
+      showToast('导出失败: ' + e.message, 'danger');
+    }
+  }
+
+  // ============================================================
+  // REPORTS
+  // ============================================================
+  async function loadReportData() {
+    const reportType = document.querySelector('#reportTabs .nav-link.active').dataset.period;
+    const periodKey = document.getElementById('reportPeriodSelector').value;
+    if (!periodKey) return;
+    
+    // Try to get cached report first
+    let { data: report } = await supabase
+      .from('expense_reports')
+      .select('*')
+      .eq('report_type', reportType)
+      .eq('period_key', periodKey)
+      .single();
+
+    // If no cached report, compute on-the-fly
+    if (!report) {
+      // Call RPC to generate
+      const { data: rpcResult, error } = await supabase.rpc('refresh_expense_report', {
+        p_type: reportType,
+        p_key: periodKey
+      });
+      if (rpcResult) report = rpcResult;
+    }
+
+    renderReport(report, reportType, periodKey);
+  }
+
+  function renderReport(report, type, key) {
+    const container = document.getElementById('reportContent');
+    if (!report) {
+      container.innerHTML = '<p class="text-muted">暂无数据</p>';
+      return;
+    }
+
+    const total = report.total_amount || report.total || 0;
+    const count = report.invoice_count || report.count || 0;
+    const breakdown = report.category_breakdown || (report.breakdown ? JSON.parse(JSON.stringify(report.breakdown)) : {});
+
+    let typeLabel = type === 'monthly' ? '月' : type === 'quarterly' ? '季度' : '年';
+
+    let html = `
+      <div class="row g-3 mb-3">
+        <div class="col-md-4">
+          <div class="stat-card p-3">
+            <div class="label">${key} ${typeLabel}度总支出</div>
+            <div class="value" style="font-size:24px">¥${(total || 0).toFixed(2)}</div>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="stat-card p-3">
+            <div class="label">发票总数</div>
+            <div class="value" style="font-size:24px">${count || 0}</div>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="stat-card p-3">
+            <div class="label">平均单张金额</div>
+            <div class="value" style="font-size:24px">¥${(count > 0 ? (total / count) : 0).toFixed(2)}</div>
+          </div>
+        </div>
+      </div>`;
+
+    if (Object.keys(breakdown).length > 0) {
+      html += `<div class="section-card"><h5>类目明细</h5>
+        <div class="table-responsive"><table class="table">
+          <thead><tr><th>费用类目</th><th>金额</th><th>占比</th></tr></thead>
+          <tbody>`;
+      const sorted = Object.entries(breakdown).sort((a, b) => b[1] - a[1]);
+      sorted.forEach(([cat, amt]) => {
+        const pct = total > 0 ? ((amt / total) * 100).toFixed(1) : 0;
+        html += `<tr><td>${cat}</td><td>¥${parseFloat(amt).toFixed(2)}</td><td>
+          <div class="progress" style="height:6px"><div class="progress-bar" style="width:${pct}%"></div></div>
+          <small>${pct}%</small>
+        </td></tr>`;
+      });
+      html += `</tbody></table></div></div>`;
+    }
+
+    container.innerHTML = html;
+  }
+
+  async function refreshReport() {
+    await loadReportData();
+    showToast('报表已刷新', 'success');
+  }
+
+  async function exportReport() {
+    const reportType = document.querySelector('#reportTabs .nav-link.active').dataset.period;
+    const periodKey = document.getElementById('reportPeriodSelector').value;
+    showToast('正在导出...', 'info');
+
+    // Get all invoices for this period
+    let invoices = [];
+    if (reportType === 'monthly') {
+      const { data } = await supabase.from('invoices')
+        .select('*')
+        .gte('invoice_date', `${periodKey}-01`)
+        .lte('invoice_date', `${periodKey}-31`)
+        .eq('status', 'approved');
+      invoices = data || [];
+    } else if (reportType === 'quarterly') {
+      const [year, q] = periodKey.split('-');
+      const qNum = parseInt(q[1]);
+      const startM = (qNum-1)*3+1;
+      const endM = qNum*3;
+      const { data } = await supabase.from('invoices')
+        .select('*')
+        .gte('invoice_date', `${year}-${String(startM).padStart(2,'0')}-01`)
+        .lte('invoice_date', `${year}-${String(endM).padStart(2,'0')}-31`)
+        .eq('status', 'approved');
+      invoices = data || [];
+    } else {
+      const { data } = await supabase.from('invoices')
+        .select('*')
+        .gte('invoice_date', `${periodKey}-01-01`)
+        .lte('invoice_date', `${periodKey}-12-31`)
+        .eq('status', 'approved');
+      invoices = data || [];
+    }
+
+    // Build CSV
+    const headers = ['发票号码','开票日期','商家','项目描述','金额','税额','价税合计','类目','地点'];
+    const rows = invoices.map(inv => {
+      const cat = categories.find(c => c.id === inv.category_id);
+      return [inv.invoice_number, inv.invoice_date, inv.seller_name, inv.item_description,
+        inv.amount, inv.tax_amount, inv.total_amount, cat?.name, inv.project_location]
+        .map(v => `"${v || ''}"`).join(',');
+    });
+    const csv = '\uFEFF' + headers.join(',') + '\n' + rows.join('\n');
+    
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `ECS报表_${periodKey}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('✅ 导出成功', 'success');
+  }
+
+  // ============================================================
+  // CATEGORY MANAGEMENT
+  // ============================================================
+  async function loadCategoryManagement() {
+    const { data } = await supabase.from('expense_categories').select('*').order('sort_order');
+    if (!data) return;
+    categories = data;
+
+    const container = document.getElementById('categoryList');
+    container.innerHTML = `
+      <div class="table-responsive">
+        <table class="table">
+          <thead><tr><th>排序</th><th>名称</th><th>描述</th><th>操作</th></tr></thead>
+          <tbody>
+            ${data.map(c => `<tr>
+              <td><input type="number" class="form-control form-control-sm" style="width:60px" value="${c.sort_order}" id="sort_${c.id}"></td>
+              <td><input class="form-control form-control-sm" value="${c.name}" id="name_${c.id}"></td>
+              <td><input class="form-control form-control-sm" value="${c.description || ''}" id="desc_${c.id}"></td>
+              <td>
+                <button class="btn btn-sm btn-outline-primary" onclick="updateCategory(${c.id})"><i class="bi bi-save"></i></button>
+              </td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      <hr>
+      <h6>添加新类目</h6>
+      <div class="row g-2">
+        <div class="col-md-3"><input class="form-control" id="newCatName" placeholder="类目名称"></div>
+        <div class="col-md-5"><input class="form-control" id="newCatDesc" placeholder="描述（可选）"></div>
+        <div class="col-md-2"><input class="form-control" id="newCatSort" type="number" placeholder="排序" value="99"></div>
+        <div class="col-md-2"><button class="btn btn-primary w-100" onclick="addCategory()">添加</button></div>
+      </div>
+    `;
+  }
+
+  async function updateCategory(id) {
+    const name = document.getElementById(`name_${id}`).value.trim();
+    const description = document.getElementById(`desc_${id}`).value.trim();
+    const sort_order = parseInt(document.getElementById(`sort_${id}`).value) || 0;
+    if (!name) return showToast('类目名称不能为空', 'warning');
+
+    const { error } = await supabase.from('expense_categories').update({ name, description, sort_order }).eq('id', id);
+    if (error) showToast('更新失败: ' + error.message, 'danger');
+    else { showToast('✅ 更新成功', 'success'); loadCategoryManagement(); }
+  }
+
+  async function addCategory() {
+    const name = document.getElementById('newCatName').value.trim();
+    const description = document.getElementById('newCatDesc').value.trim();
+    const sort_order = parseInt(document.getElementById('newCatSort').value) || 99;
+    if (!name) return showToast('请输入类目名称', 'warning');
+
+    const { error } = await supabase.from('expense_categories').insert({ name, description, sort_order });
+    if (error) showToast('添加失败: ' + error.message, 'danger');
+    else { showToast('✅ 添加成功', 'success'); loadCategoryManagement(); loadCategories(); }
+  }
+
+  // ============================================================
+  // ADMIN PANEL
+  // ============================================================
+  async function loadAdminPanel() {
+    const { data: profiles } = await supabase.from('profiles').select('*').order('created_at');
+    const container = document.getElementById('adminContent');
+    
+    if (!profiles || profiles.length === 0) {
+      container.innerHTML = '<p class="text-muted">暂无用户</p>';
+      return;
+    }
+
+    container.innerHTML = `
+      <h5>用户管理</h5>
+      <div class="table-responsive">
+        <table class="table">
+          <thead><tr><th>邮箱</th><th>名称</th><th>角色</th><th>状态</th><th>操作</th></tr></thead>
+          <tbody>
+            ${profiles.map(p => `
+              <tr>
+                <td>${p.email || '-'}</td>
+                <td>${p.name || '-'}</td>
+                <td>
+                  <select class="form-select form-select-sm" id="role_${p.id}">
+                    <option value="member" ${p.role === 'member' ? 'selected' : ''}>成员</option>
+                    <option value="admin" ${p.role === 'admin' ? 'selected' : ''}>管理员</option>
+                    <option value="super_admin" ${p.role === 'super_admin' ? 'selected' : ''}>超级管理员</option>
+                  </select>
+                </td>
+                <td><span class="badge ${p.status === 'active' ? 'bg-success' : 'bg-warning'}">${p.status}</span></td>
+                <td>
+                  <button class="btn btn-sm btn-outline-primary" onclick="updateUserProfile('${p.id}')"><i class="bi bi-save"></i></button>
+                  <button class="btn btn-sm btn-outline-${p.status === 'active' ? 'warning' : 'success'}" onclick="toggleUserStatus('${p.id}','${p.status}')">
+                    ${p.status === 'active' ? '停用' : '启用'}
+                  </button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+      <hr>
+      <h6>系统统计</h6>
+      <p class="text-muted">如需查看完整系统使用统计，请到 Supabase Dashboard 查看</p>
+    `;
+  }
+
+  async function updateUserProfile(userId) {
+    const role = document.getElementById(`role_${userId}`).value;
+    const { error } = await supabase.rpc('admin_create_profile', {
+      p_id: userId, p_email: '', p_name: '', p_role: role
+    });
+    if (error) showToast('更新失败: ' + error.message, 'danger');
+    else showToast('✅ 已更新', 'success');
+  }
+
+  async function toggleUserStatus(userId, currentStatus) {
+    const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
+    const { error } = await supabase.rpc('admin_update_user_status', { user_id: userId, new_status: newStatus });
+    if (error) showToast('操作失败: ' + error.message, 'danger');
+    else { showToast('✅ 已更新', 'success'); loadAdminPanel(); }
+  }
+
+  // ============================================================
+  // TOAST NOTIFICATIONS
+  // ============================================================
+  function showToast(message, type = 'info') {
+    const container = document.getElementById('toastContainer');
+    const id = 'toast_' + Date.now();
+    const bgColor = type === 'success' ? '#d4edda' : type === 'danger' ? '#f8d7da' : type === 'warning' ? '#fff3cd' : '#d1ecf1';
+    const textColor = type === 'success' ? '#155724' : type === 'danger' ? '#721c24' : type === 'warning' ? '#856404' : '#0c5460';
+    
+    container.innerHTML += `<div id="${id}" style="background:${bgColor};color:${textColor};padding:12px 20px;border-radius:8px;margin-bottom:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1);max-width:400px;font-size:14px">${message}</div>`;
+    setTimeout(() => {
+      const el = document.getElementById(id);
+      if (el) el.remove();
+    }, 4000);
+  }
+  </script>
+</body>
+</html>
