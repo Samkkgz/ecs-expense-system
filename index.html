@@ -799,21 +799,19 @@ async function init() {
           throw new Error(errText || ('HTTP ' + uploadRes.status));
         }
 
-        // Create invoice record
-        const { error: insertError } = await supabase
-          .from('invoices')
-          .insert({
-            storage_path: 'invoices/' + storagePath,
-            original_filename: file.name,
-            file_size: file.size,
-            category_id: categoryId || null,
-            project_location: location || null,
-            uploaded_by: currentUser.id,
-            status: 'pending',
-            // Will be filled by Edge Function OCR
-          });
-
-        if (insertError) throw insertError;
+        // Create invoice record via REST API
+        var sessRes = await sb.auth.getSession();
+        var token = sessRes?.data?.session?.access_token || SUPABASE_ANON_KEY;
+        var insRes = await fetch(SUPABASE_URL + '/rest/v1/invoices', {
+          method: 'POST',
+          headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+          body: JSON.stringify({
+            storage_path: 'invoices/' + storagePath, original_filename: file.name,
+            file_size: file.size, category_id: categoryId || null,
+            project_location: location || null, uploaded_by: currentUser.id, status: 'pending'
+          })
+        });
+        if (!insRes.ok) { var errText = await insRes.text(); throw new Error(errText); }
 
         resultDiv.innerHTML += `<div class="alert alert-success">✅ 上传成功: ${file.name}</div>`;
       } catch (e) {
