@@ -259,3 +259,29 @@ BEGIN
   RETURN v_result;
 END;
 $$;
+
+-- ============================================================
+-- RPC 函数：插入发票（绕过 RLS）
+-- ============================================================
+CREATE OR REPLACE FUNCTION insert_invoice(
+  p_storage_path TEXT,
+  p_original_filename TEXT,
+  p_file_size INTEGER,
+  p_category_id BIGINT,
+  p_project_location TEXT,
+  p_uploaded_by UUID,
+  p_status TEXT DEFAULT 'pending'
+)
+RETURNS JSONB
+LANGUAGE plpgsql SECURITY DEFINER
+AS $$
+DECLARE
+  v_result JSONB;
+BEGIN
+  INSERT INTO invoices (storage_path, original_filename, file_size, category_id, project_location, uploaded_by, status)
+  VALUES (p_storage_path, p_original_filename, p_file_size, p_category_id, p_project_location, p_uploaded_by, p_status);
+  
+  v_result := JSONB_BUILD_OBJECT('success', true);
+  RETURN v_result;
+END;
+$$;
