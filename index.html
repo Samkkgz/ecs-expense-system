@@ -414,6 +414,19 @@ async function init() {
   }
 
   // ============================================================
+  // 鉴权辅助函数（使用 Supabase SDK，与 OGD 项目一致）
+  // ============================================================
+  function sendMagicLink(email) {
+    return sb.auth.signInWithOtp({ email: email, options: { shouldCreateUser: true } });
+  }
+  function checkSession() {
+    return sb.auth.getSession();
+  }
+  function signOut() {
+    return sb.auth.signOut();
+  }
+
+  // ============================================================
   // 登录/登出
   // ============================================================
   async function handleLogin() {
