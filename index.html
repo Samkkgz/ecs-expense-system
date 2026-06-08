@@ -784,11 +784,20 @@ async function init() {
         // Use extension-only, strip Chinese chars from filename
         var ext = file.name.lastIndexOf('.') > -1 ? file.name.substring(file.name.lastIndexOf('.')) : '.pdf';
         var storagePath = year + '/' + mon + '/' + Date.now() + ext;
-        const { error: uploadError } = await sb.storage
-          .from('invoices')
-          .upload(storagePath, file, { contentType: 'application/pdf', upsert: false });
-
-        if (uploadError) throw uploadError;
+        // Upload to Storage using REST API directly
+        var uploadUrl = SUPABASE_URL + '/storage/v1/object/invoices/' + storagePath;
+        var uploadRes = await fetch(uploadUrl, {
+          method: 'POST',
+          headers: {
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': 'Bearer ' + sbAuthToken,
+          },
+          body: file
+        });
+        if (!uploadRes.ok) {
+          var errText = await uploadRes.text();
+          throw new Error(errText || ('HTTP ' + uploadRes.status));
+        }
 
         // Create invoice record
         const { error: insertError } = await supabase

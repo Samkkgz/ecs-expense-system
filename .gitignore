@@ -1,0 +1,5 @@
+.DS_Store
+supabase/.temp/
+明天跑这个.txt
+deploy.command
+deploy.sh
