@@ -1,0 +1,10 @@
+==========================================
+明天打开终端，粘贴这一行按 Enter：
+==========================================
+
+cd "/Users/sam.lu/Documents/Business Related/Finance/Expenses/ECS  Expanses/ecs-expense-system" && git push origin main
+
+==========================================
+推送后等2分钟，刷新页面测试上传：
+https://samkkgz.github.io/ecs-expense-system/
+==========================================

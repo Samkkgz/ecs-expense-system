@@ -781,8 +781,9 @@ async function init() {
 
       try {
         // Upload to Supabase Storage
-        const fileName = encodeURIComponent(file.name);
-        const storagePath = `${year}/${mon}/${Date.now()}_${fileName}`;
+        // Use extension-only, strip Chinese chars from filename
+        var ext = file.name.lastIndexOf('.') > -1 ? file.name.substring(file.name.lastIndexOf('.')) : '.pdf';
+        var storagePath = year + '/' + mon + '/' + Date.now() + ext;
         const { error: uploadError } = await sb.storage
           .from('invoices')
           .upload(storagePath, file, { contentType: 'application/pdf', upsert: false });
@@ -794,6 +795,7 @@ async function init() {
           .from('invoices')
           .insert({
             storage_path: 'invoices/' + storagePath,
+            original_filename: file.name,
             original_filename: file.name,
             file_size: file.size,
             category_id: categoryId || null,
