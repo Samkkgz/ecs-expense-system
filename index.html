@@ -781,7 +781,8 @@ async function init() {
 
       try {
         // Upload to Supabase Storage
-        const storagePath = `invoices/${year}/${mon}/${Date.now()}_${file.name}`;
+        const fileName = encodeURIComponent(file.name);
+        const storagePath = `${year}/${mon}/${Date.now()}_${fileName}`;
         const { error: uploadError } = await sb.storage
           .from('invoices')
           .upload(storagePath, file, { contentType: 'application/pdf', upsert: false });
@@ -792,7 +793,7 @@ async function init() {
         const { error: insertError } = await supabase
           .from('invoices')
           .insert({
-            storage_path: storagePath,
+            storage_path: 'invoices/' + storagePath,
             original_filename: file.name,
             file_size: file.size,
             category_id: categoryId || null,
