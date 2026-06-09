@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ECS 报销管理系统</title>
-  <script src="https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11/font/bootstrap-icons.css">
   <style>
@@ -395,10 +395,11 @@ async function init() {
   // 鉴权辅助函数（使用 Supabase SDK，与 OGD 项目一致）
   // ============================================================
   function sendMagicLink(email) {
-    return fetch(SUPABASE_URL + '/auth/v1/otp', {
+    // Use REST API directly to ensure correct redirect_to
+    return fetch(SUPABASE_URL + '/auth/v1/otp?redirect_to=https://samkkgz.github.io/ecs-expense-system/', {
       method: 'POST',
       headers: { 'apikey': SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, should_create_user: true })
+      body: JSON.stringify({ email, should_create_user: true, gotrue_meta_security: {} })
     }).then(function(r) {
       if (!r.ok) return Promise.reject(new Error('发送失败'));
       return {};
