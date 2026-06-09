@@ -395,11 +395,10 @@ async function init() {
   // 鉴权辅助函数（使用 Supabase SDK，与 OGD 项目一致）
   // ============================================================
   function sendMagicLink(email) {
-    // Use REST API directly to ensure correct redirect_to
-    return fetch(SUPABASE_URL + '/auth/v1/otp?redirect_to=https://samkkgz.github.io/ecs-expense-system/', {
+    return fetch(SUPABASE_URL + '/auth/v1/otp', {
       method: 'POST',
       headers: { 'apikey': SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, should_create_user: true, gotrue_meta_security: {} })
+      body: JSON.stringify({ email, should_create_user: true })
     }).then(function(r) {
       if (!r.ok) return Promise.reject(new Error('发送失败'));
       return {};
