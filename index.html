@@ -906,7 +906,10 @@ async function init() {
           <td><strong>¥${parseFloat(inv.total_amount||0).toFixed(2)}</strong></td>
           <td><span class="badge bg-secondary">${cat?.name || '未分类'}</span></td>
           <td><span class="badge-status ${statusBadge}">${statusText}</span></td>
-          <td><button class="btn btn-sm btn-outline-primary" onclick="editInvoice(${inv.id})"><i class="bi bi-pencil"></i></button></td>
+          <td style="white-space:nowrap">
+            <button class="btn btn-sm btn-outline-info" onclick="ocrInvoice(${inv.id})" title="OCR识别"><i class="bi bi-arrow-repeat"></i></button>
+            <button class="btn btn-sm btn-outline-primary" onclick="editInvoice(${inv.id})"><i class="bi bi-pencil"></i></button>
+          </td>
         </tr>`;
       }).join('');
     }
@@ -925,6 +928,103 @@ async function init() {
   }
 
   // ============================================================
+    // ============================================================
+  // 浏览器端 OCR 识别（延迟加载，不阻塞页面）
+  // ============================================================
+  async function ocrInvoice(id) {
+    const inv = allInvoices.find(i => i.id === id);
+    if (!inv) { alert('未找到发票记录'); return; }
+    if (!confirm('下载PDF进行OCR识别？需要几秒钟。')) return;
+    
+    var btn = document.querySelector('button[onclick="ocrInvoice(' + id + ')"]');
+    if (btn) btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+    
+    try {
+      // Step 1: Download PDF via public URL
+      var dlUrl = SUPABASE_URL + '/storage/v1/object/public/invoices/' + inv.storage_path;
+      var dlRes = await fetch(dlUrl);
+      if (!dlRes.ok) throw new Error('下载PDF失败');
+      var pdfBlob = await dlRes.blob();
+      
+      // Step 2: Render first page to canvas
+      var buf = await pdfBlob.arrayBuffer();
+      var pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+      var pg = await pdf.getPage(1);
+      var vp = pg.getViewport({ scale: 3.0 });
+      var can = document.createElement('canvas');
+      can.width = vp.width; can.height = vp.height;
+      var ctx = can.getContext('2d');
+      await pg.render({ canvasContext: ctx, viewport: vp }).promise;
+      
+      // Step 3: Run OCR
+      btn.innerHTML = 'OCR中...';
+      var ocr = await Tesseract.recognize(can, 'chi_sim', {
+        langPath: 'https://cdn.jsdelivr.net/npm/tesseract.js-data@4.0.0/',
+        logger: function(m) {
+          if (m.status === 'recognizing text') btn.innerHTML = Math.round(m.progress * 100) + '%';
+        }
+      });
+      var text = ocr.data.text;
+      if (!text || text.trim().length < 5) throw new Error('OCR未能识别出文字');
+      
+      // Step 4: Parse fields from OCR text
+      var parsed = parseOcrText(text);
+      
+      // Step 5: Save to database
+      btn.innerHTML = '保存中...';
+      var { data: { session } } = await sb.auth.getSession();
+      var token = session ? session.access_token : SUPABASE_ANON_KEY;
+      var updData = { raw_ocr_text: text, ocr_confidence: 0.7 };
+      if (parsed.invoice_number) updData.invoice_number = parsed.invoice_number;
+      if (parsed.invoice_date) updData.invoice_date = parsed.invoice_date;
+      if (parsed.seller_name) updData.seller_name = parsed.seller_name;
+      if (parsed.total_amount) updData.total_amount = parsed.total_amount;
+      
+      var saveRes = await fetch(SUPABASE_URL + '/rest/v1/invoices?id=eq.' + id, {
+        method: 'PATCH',
+        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+        body: JSON.stringify(updData)
+      });
+      
+      // Step 6: Update local data and open edit modal
+      Object.assign(inv, updData);
+      await loadInvoices();
+      editInvoice(id);
+    } catch(e) {
+      alert('OCR失败: ' + e.message);
+    }
+    if (btn) btn.innerHTML = '↻';
+  }
+  
+  // ============================================================
+  // 解析 OCR 文字
+  // ============================================================
+  function parseOcrText(text) {
+    var data = {};
+    var t = text.replace(/\s+/g, ' ').trim();
+    
+    // 发票号码
+    var m = t.match(/(?:发票|号码)\s*[：:]\s*(\d{8,25})/);
+    if (m) data.invoice_number = m[1];
+    
+    // 日期
+    var dt = t.match(/(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日/);
+    if (dt) data.invoice_date = dt[1] + '-' + String(dt[2]).padStart(2,'0') + '-' + String(dt[3]).padStart(2,'0');
+    
+    // 销售方（在"销售方"字段后面找名称）
+    var ss = t.split('销售方')[1];
+    if (ss) {
+      var n = ss.match(/(?:名称|名[称称])\s*[：:]\s*([^\s]{2,30})/);
+      if (n) data.seller_name = n[1].trim();
+    }
+    
+    // 金额
+    var am = t.match(/[¥￥]\s*(\d+\.\d{2})/);
+    if (am) data.total_amount = parseFloat(am[1]);
+    
+    return data;
+  }
+  
   // INVOICE EDIT MODAL
   // ============================================================
   async function editInvoice(id) {
@@ -1335,5 +1435,7 @@ async function init() {
     }, 4000);
   }
   </script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js" defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" defer></script>
 </body>
 </html>
