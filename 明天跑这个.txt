@@ -1,10 +1,23 @@
 ==========================================
-明天打开终端，粘贴这一行按 Enter：
+📋 ECS 报销管理系统 - 部署步骤
 ==========================================
 
+第1步：推送代码到 GitHub
+--------------------------------------------------
 cd "/Users/sam.lu/Documents/Business Related/Finance/Expenses/ECS  Expanses/ecs-expense-system" && git push origin main
 
+第2步（可选）：部署 Edge Function
+--------------------------------------------------
+cd "/Users/sam.lu/Documents/Business Related/Finance/Expenses/ECS  Expanses/ecs-expense-system" && supabase functions deploy process-invoice --no-verify-jwt
+
+第3步（可选）：设置 Webhook 自动识别
+--------------------------------------------------
+Supabase Dashboard → Database → Webhooks → 创建：
+- Name: ocr-on-insert
+- Table: invoices → Insert 事件
+- Type: Supabase Edge Function → process-invoice
+
 ==========================================
-推送后等2分钟，刷新页面测试上传：
-https://samkkgz.github.io/ecs-expense-system/
+测试地址：https://samkkgz.github.io/ecs-expense-system/
+推送后等2分钟部署完成，Ctrl+F5 强制刷新
 ==========================================
