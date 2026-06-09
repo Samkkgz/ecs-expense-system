@@ -950,7 +950,10 @@ async function init() {
         headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
         body: JSON.stringify({ record: { id: id, storage_path: inv.storage_path } })
       });
-      var funcData = await funcRes.json();
+      var funcText = await funcRes.text();
+      var funcData;
+      try { funcData = JSON.parse(funcText); } catch(e) { funcData = { success: false, error: "响应格式错误" }; }
+      if (!funcRes.ok) { funcData.success = false; funcData.error = (funcData.error || '') + ' (HTTP ' + funcRes.status + ')'; }
       
       if (funcData.success && funcData.data) {
         // 文字提取成功
@@ -988,7 +991,10 @@ async function init() {
         headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
         body: JSON.stringify({ record: { id: id, storage_path: inv.storage_path, image_base64: imageBase64 } })
       });
-      var ocrData = await ocrRes.json();
+      var ocrText = await ocrRes.text();
+      var ocrData;
+      try { ocrData = JSON.parse(ocrText); } catch(e) { ocrData = { success: false, error: "响应格式错误: " + ocrText.substring(0,200) }; }
+      if (!ocrRes.ok) { ocrData.success = false; ocrData.error = (ocrData.error || '') + ' (HTTP ' + ocrRes.status + ')'; }
       
       if (ocrData.success && ocrData.data) {
         btn.innerHTML = '✓';
@@ -1127,7 +1133,7 @@ async function init() {
         </div>
       </div>
     `;
-    modal.show();
+    document.getElementById('invoiceModal').style.display = 'block';
     
     // Load PDF preview
     setTimeout(function() {
