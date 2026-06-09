@@ -930,69 +930,93 @@ async function init() {
 
   // ============================================================
     // ============================================================
-  // 浏览器端 OCR 识别（延迟加载，不阻塞页面）
+  // 发票识别（优先服务器端提取文字，失败则浏览器OCR）
   // ============================================================
   async function ocrInvoice(id) {
     const inv = allInvoices.find(i => i.id === id);
     if (!inv) { alert('未找到发票记录'); return; }
-    if (!confirm('下载PDF进行OCR识别？需要几秒钟。')) return;
     
     var btn = document.querySelector('button[onclick="ocrInvoice(' + id + ')"]');
     if (btn) btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
     
     try {
-      // Step 1: Download PDF via public URL
+      // === 方案 A：调用 Supabase Edge Function 提取文字 ===
+      btn.innerHTML = '服务器识别中...';
+      var { data: { session } } = await sb.auth.getSession();
+      var token = session ? session.access_token : SUPABASE_ANON_KEY;
+      
+      var funcRes = await fetch(SUPABASE_URL + '/functions/v1/process-invoice', {
+        method: 'POST',
+        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ record: { id: id, storage_path: inv.storage_path } })
+      });
+      var funcData = await funcRes.json();
+      
+      if (funcData.success && funcData.data) {
+        // 服务器端成功提取并保存了数据
+        btn.innerHTML = '识别完成 ✓';
+        Object.assign(inv, funcData.data);
+        if (funcData.data.invoice_date) inv.invoice_date = funcData.data.invoice_date;
+        await loadInvoices();
+        editInvoice(id);
+        showToast('✅ 识别完成，请核对信息', 'success');
+        if (btn) btn.innerHTML = '↻';
+        return;
+      }
+      
+      // === 方案 B：浏览器端 Tesseract OCR（降低分辨率提速） ===
+      btn.innerHTML = '下载PDF中...';
       var dlUrl = SUPABASE_URL + '/storage/v1/object/public/invoices/' + inv.storage_path;
       var dlRes = await fetch(dlUrl);
       if (!dlRes.ok) throw new Error('下载PDF失败');
       var pdfBlob = await dlRes.blob();
       
-      // Step 2: Render first page to canvas
+      btn.innerHTML = '渲染页面中...';
       var buf = await pdfBlob.arrayBuffer();
       var pdf = await pdfjsLib.getDocument({ data: buf }).promise;
       var pg = await pdf.getPage(1);
-      var vp = pg.getViewport({ scale: 3.0 });
+      // 降低渲染倍率从 3.0 到 1.5，速度提升4倍
+      var vp = pg.getViewport({ scale: 1.5 });
       var can = document.createElement('canvas');
       can.width = vp.width; can.height = vp.height;
       var ctx = can.getContext('2d');
       await pg.render({ canvasContext: ctx, viewport: vp }).promise;
       
-      // Step 3: Run OCR
-      btn.innerHTML = 'OCR中...';
+      btn.innerHTML = 'OCR识别中...';
+      var ocrStart = Date.now();
       var ocr = await Tesseract.recognize(can, 'chi_sim', {
         langPath: 'https://cdn.jsdelivr.net/npm/tesseract.js-data@4.0.0/',
         logger: function(m) {
-          if (m.status === 'recognizing text') btn.innerHTML = Math.round(m.progress * 100) + '%';
+          if (m.status === 'recognizing text') {
+            var pct = Math.round(m.progress * 100);
+            btn.innerHTML = 'OCR ' + pct + '%';
+          }
         }
       });
       var text = ocr.data.text;
-      if (!text || text.trim().length < 5) throw new Error('OCR未能识别出文字');
+      if (!text || text.trim().length < 5) throw new Error('未能识别出有效文字');
       
-      // Step 4: Parse fields from OCR text
+      btn.innerHTML = '解析保存中...';
       var parsed = parseOcrText(text);
       
-      // Step 5: Save to database
-      btn.innerHTML = '保存中...';
-      var { data: { session } } = await sb.auth.getSession();
-      var token = session ? session.access_token : SUPABASE_ANON_KEY;
-      var updData = { raw_ocr_text: text, ocr_confidence: 0.7 };
+      var updData = { raw_ocr_text: text, ocr_confidence: 0.6 };
       if (parsed.invoice_number) updData.invoice_number = parsed.invoice_number;
       if (parsed.invoice_date) updData.invoice_date = parsed.invoice_date;
       if (parsed.seller_name) updData.seller_name = parsed.seller_name;
       if (parsed.total_amount) updData.total_amount = parsed.total_amount;
       
-      var saveRes = await fetch(SUPABASE_URL + '/rest/v1/invoices?id=eq.' + id, {
+      await fetch(SUPABASE_URL + '/rest/v1/invoices?id=eq.' + id, {
         method: 'PATCH',
         headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
         body: JSON.stringify(updData)
       });
       
-      // Step 6: Update local data and open edit modal
       Object.assign(inv, updData);
       await loadInvoices();
       editInvoice(id);
+      showToast('✅ 识别完成，请核对信息', 'success');
     } catch(e) {
-      alert('OCR失败: ' + e.message);
+      alert('❌ 识别失败: ' + e.message);
     }
     if (btn) btn.innerHTML = '↻';
   }
