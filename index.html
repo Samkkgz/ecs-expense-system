@@ -586,10 +586,11 @@ async function init() {
     
     document.getElementById('dashYearLabel').textContent = `- ${year}年`;
 
-    // Annual stats
+    // Annual stats (只统计已通过的发票)
     const { data: annualInvoices } = await sb
       .from('invoices')
       .select('total_amount, category_id, invoice_date')
+      .eq('status', 'approved')
       .gte('invoice_date', `${year}-01-01`)
       .lte('invoice_date', `${year}-12-31`)
       ;
@@ -1294,24 +1295,53 @@ async function init() {
     const periodKey = document.getElementById('reportPeriodSelector').value;
     if (!periodKey) return;
     
-    // Try to get cached report first
-    let { data: report } = await sb
-      .from('expense_reports')
-      .select('*')
-      .eq('report_type', reportType)
-      .eq('period_key', periodKey)
-      .single();
-
-    // If no cached report, compute on-the-fly
-    if (!report) {
-      // Call RPC to generate
-      const { data: rpcResult, error } = await sb.rpc('refresh_expense_report', {
-        p_type: reportType,
-        p_key: periodKey
-      });
-      if (rpcResult) report = rpcResult;
+    // 直接从数据库统计（只统计已通过的发票）
+    var year, month, quarter;
+    if (reportType === 'monthly') {
+      year = periodKey.split('-')[0];
+      month = periodKey.split('-')[1];
+    } else if (reportType === 'quarterly') {
+      year = periodKey.split('-')[0];
+      var qNum = parseInt(periodKey.split('Q')[1]);
+      quarter = qNum;
+    } else {
+      year = periodKey;
     }
-
+    
+    // 查询已通过的发票
+    var query = sb.from('invoices').select('total_amount, category_id, invoice_date, seller_name').eq('status', 'approved');
+    
+    if (reportType === 'monthly') {
+      var startDate = year + '-' + month + '-01';
+      query = query.gte('invoice_date', startDate).lte('invoice_date', year + '-' + month + '-31');
+    } else if (reportType === 'quarterly') {
+      var qm = String((quarter-1)*3+1).padStart(2,'0');
+      var qmEnd = String(quarter*3).padStart(2,'0');
+      query = query.gte('invoice_date', year + '-' + qm + '-01').lte('invoice_date', year + '-' + qmEnd + '-31');
+    } else {
+      query = query.gte('invoice_date', year + '-01-01').lte('invoice_date', year + '-12-31');
+    }
+    
+    var { data: invoices } = await query;
+    
+    if (!invoices || invoices.length === 0) {
+      renderReport(null, reportType, periodKey);
+      return;
+    }
+    
+    var total = invoices.reduce(function(s, i) { return s + parseFloat(i.total_amount || 0); }, 0);
+    var count = invoices.length;
+    
+    // 按类目统计
+    var cats = {};
+    for (var inv of invoices) {
+      var catName = '未分类';
+      var cat = categories.find(function(c) { return c.id === inv.category_id; });
+      if (cat) catName = cat.name;
+      cats[catName] = (cats[catName] || 0) + parseFloat(inv.total_amount || 0);
+    }
+    
+    var report = { total_amount: total, invoice_count: count, category_breakdown: cats };
     renderReport(report, reportType, periodKey);
   }
 
