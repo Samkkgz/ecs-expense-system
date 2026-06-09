@@ -239,6 +239,7 @@
             <select id="filterCategory"><option value="">全部类目</option></select>
             <select id="filterStatus"><option value="">全部状态</option><option value="pending">待审核</option><option value="approved">已通过</option><option value="rejected">已驳回</option></select>
             <input type="text" id="filterSearch" placeholder="🔍 搜索发票号码/商家..." style="flex:1;min-width:150px">
+            <button class="btn btn-sm btn-outline-danger" onclick="cleanupDuplicates()" title="删除重复发票"><i class="bi bi-eraser"></i> 清理重复</button>
             <button class="btn btn-outline-primary btn-sm" onclick="exportInvoices()"><i class="bi bi-download"></i> 导出Excel</button>
           </div>
           <div class="table-responsive">
@@ -775,6 +776,13 @@ async function init() {
         continue;
       }
 
+      // 去重检查：是否已上传过同名同大小的文件
+      var { data: dupes } = await sb.from('invoices').select('id').eq('original_filename', file.name).eq('file_size', file.size).limit(1);
+      if (dupes && dupes.length > 0) {
+        resultDiv.innerHTML += `<div class="alert alert-info">⏭ 已跳过重复文件: ${file.name}（之前已上传）</div>`;
+        continue;
+      }
+
       const pct = Math.round(((i) / files.length) * 100);
       bar.style.width = `${pct}%`;
       bar.textContent = `${pct}%`;
@@ -930,6 +938,58 @@ async function init() {
 
   // ============================================================
     // ============================================================
+  // 清理重复发票（同文件名+同大小视为重复）
+  // ============================================================
+  async function cleanupDuplicates() {
+    if (!confirm('确定要清理重复上传的发票吗？同名同大小的文件只保留最新一份。')) return;
+    
+    var { data: allInvs } = await sb.from('invoices').select('id, original_filename, file_size, created_at, storage_path').order('created_at', { ascending: false });
+    if (!allInvs || allInvs.length === 0) return showToast('没有需要清理的数据', 'info');
+    
+    var seen = {};
+    var toDelete = [];
+    var deleteIds = [];
+    
+    for (var inv of allInvs) {
+      var key = inv.original_filename + '_' + (inv.file_size || 0);
+      if (seen[key]) {
+        toDelete.push(inv.storage_path);
+        deleteIds.push(inv.id);
+      } else {
+        seen[key] = true;
+      }
+    }
+    
+    if (toDelete.length === 0) {
+      showToast('✅ 没有发现重复发票', 'success');
+      return;
+    }
+    
+    try {
+      // 删除存储文件
+      for (var path of toDelete) {
+        await fetch(SUPABASE_URL + '/storage/v1/object/invoices/' + path, {
+          method: 'DELETE',
+          headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+        }).catch(function(){});
+      }
+      
+      // 删除数据库记录
+      for (var delId of deleteIds) {
+        await fetch(SUPABASE_URL + '/rest/v1/invoices?id=eq.' + delId, {
+          method: 'DELETE',
+          headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+        }).catch(function(){});
+      }
+      
+      showToast('✅ 已清理 ' + deleteIds.length + ' 条重复记录', 'success');
+      loadInvoices();
+    } catch(e) {
+      showToast('清理失败: ' + e.message, 'danger');
+    }
+  }
+  
+  // ============================================================
   // 发票识别（文字提取 + 百度OCR图片识别）
   // ============================================================
   async function ocrInvoice(id) {
