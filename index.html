@@ -930,7 +930,7 @@ async function init() {
 
   // ============================================================
     // ============================================================
-  // 发票识别（优先服务器端提取文字，失败则浏览器OCR）
+  // 发票识别（调用服务器端提取文字）
   // ============================================================
   async function ocrInvoice(id) {
     const inv = allInvoices.find(i => i.id === id);
@@ -940,8 +940,8 @@ async function init() {
     if (btn) btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
     
     try {
-      // === 方案 A：调用 Supabase Edge Function 提取文字 ===
-      btn.innerHTML = '服务器识别中...';
+      // 调用 Supabase Edge Function 提取文字
+      btn.innerHTML = '识别中...';
       var { data: { session } } = await sb.auth.getSession();
       var token = session ? session.access_token : SUPABASE_ANON_KEY;
       
@@ -953,70 +953,21 @@ async function init() {
       var funcData = await funcRes.json();
       
       if (funcData.success && funcData.data) {
-        // 服务器端成功提取并保存了数据
-        btn.innerHTML = '识别完成 ✓';
+        // 成功提取并保存了数据
+        btn.innerHTML = '✓';
         Object.assign(inv, funcData.data);
         if (funcData.data.invoice_date) inv.invoice_date = funcData.data.invoice_date;
         await loadInvoices();
         editInvoice(id);
         showToast('✅ 识别完成，请核对信息', 'success');
-        if (btn) btn.innerHTML = '↻';
-        return;
+      } else {
+        // 无法自动提取，打开编辑窗口让用户手动填写
+        showToast('⚠️ 该发票无文字信息，请手动填写', 'warning');
+        editInvoice(id);
       }
-      
-      // === 方案 B：浏览器端 Tesseract OCR（降低分辨率提速） ===
-      btn.innerHTML = '下载PDF中...';
-      var dlUrl = SUPABASE_URL + '/storage/v1/object/public/invoices/' + inv.storage_path;
-      var dlRes = await fetch(dlUrl);
-      if (!dlRes.ok) throw new Error('下载PDF失败');
-      var pdfBlob = await dlRes.blob();
-      
-      btn.innerHTML = '渲染页面中...';
-      var buf = await pdfBlob.arrayBuffer();
-      var pdf = await pdfjsLib.getDocument({ data: buf }).promise;
-      var pg = await pdf.getPage(1);
-      // 降低渲染倍率从 3.0 到 1.5，速度提升4倍
-      var vp = pg.getViewport({ scale: 1.5 });
-      var can = document.createElement('canvas');
-      can.width = vp.width; can.height = vp.height;
-      var ctx = can.getContext('2d');
-      await pg.render({ canvasContext: ctx, viewport: vp }).promise;
-      
-      btn.innerHTML = 'OCR识别中...';
-      var ocrStart = Date.now();
-      var ocr = await Tesseract.recognize(can, 'chi_sim', {
-        langPath: 'https://cdn.jsdelivr.net/npm/tesseract.js-data@4.0.0/',
-        logger: function(m) {
-          if (m.status === 'recognizing text') {
-            var pct = Math.round(m.progress * 100);
-            btn.innerHTML = 'OCR ' + pct + '%';
-          }
-        }
-      });
-      var text = ocr.data.text;
-      if (!text || text.trim().length < 5) throw new Error('未能识别出有效文字');
-      
-      btn.innerHTML = '解析保存中...';
-      var parsed = parseOcrText(text);
-      
-      var updData = { raw_ocr_text: text, ocr_confidence: 0.6 };
-      if (parsed.invoice_number) updData.invoice_number = parsed.invoice_number;
-      if (parsed.invoice_date) updData.invoice_date = parsed.invoice_date;
-      if (parsed.seller_name) updData.seller_name = parsed.seller_name;
-      if (parsed.total_amount) updData.total_amount = parsed.total_amount;
-      
-      await fetch(SUPABASE_URL + '/rest/v1/invoices?id=eq.' + id, {
-        method: 'PATCH',
-        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
-        body: JSON.stringify(updData)
-      });
-      
-      Object.assign(inv, updData);
-      await loadInvoices();
-      editInvoice(id);
-      showToast('✅ 识别完成，请核对信息', 'success');
     } catch(e) {
-      alert('❌ 识别失败: ' + e.message);
+      showToast('❌ 识别失败: ' + e.message, 'danger');
+      editInvoice(id);
     }
     if (btn) btn.innerHTML = '↻';
   }
