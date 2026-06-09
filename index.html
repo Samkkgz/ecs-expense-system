@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ECS 报销管理系统</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script>if(typeof supabase==="undefined"){document.write("<script src=https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.js><\/script>")}</script>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11/font/bootstrap-icons.css">
   <style>
@@ -585,7 +586,7 @@ async function init() {
     document.getElementById('dashYearLabel').textContent = `- ${year}年`;
 
     // Annual stats
-    const { data: annualInvoices } = await supabase
+    const { data: annualInvoices } = await sb
       .from('invoices')
       .select('total_amount, category_id, invoice_date')
       .gte('invoice_date', `${year}-01-01`)
@@ -646,7 +647,7 @@ async function init() {
     }
 
     // Recent invoices
-    const { data: recent } = await supabase
+    const { data: recent } = await sb
       .from('invoices')
       .select('*')
       .order('created_at', { ascending: false })
@@ -1193,7 +1194,7 @@ async function init() {
     if (!periodKey) return;
     
     // Try to get cached report first
-    let { data: report } = await supabase
+    let { data: report } = await sb
       .from('expense_reports')
       .select('*')
       .eq('report_type', reportType)
