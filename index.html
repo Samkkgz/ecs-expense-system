@@ -1347,11 +1347,15 @@ async function init() {
     
     if (reportType === 'monthly') {
       var startDate = year + '-' + month + '-01';
-      query = query.gte('invoice_date', startDate).lte('invoice_date', year + '-' + month + '-31');
+      // 取月份最后一天
+      var lastDay = new Date(parseInt(year), parseInt(month), 0).getDate();
+      query = query.gte('invoice_date', startDate).lte('invoice_date', year + '-' + month + '-' + String(lastDay).padStart(2,'0'));
     } else if (reportType === 'quarterly') {
       var qm = String((quarter-1)*3+1).padStart(2,'0');
-      var qmEnd = String(quarter*3).padStart(2,'0');
-      query = query.gte('invoice_date', year + '-' + qm + '-01').lte('invoice_date', year + '-' + qmEnd + '-31');
+      var qmEndMonth = String(quarter*3).padStart(2,'0');
+      // 取季度最后一天
+      var qLastDay = new Date(parseInt(year), parseInt(qmEndMonth), 0).getDate();
+      query = query.gte('invoice_date', year + '-' + qm + '-01').lte('invoice_date', year + '-' + qmEndMonth + '-' + String(qLastDay).padStart(2,'0'));
     } else {
       query = query.gte('invoice_date', year + '-01-01').lte('invoice_date', year + '-12-31');
     }
