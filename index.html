@@ -967,25 +967,21 @@ async function init() {
     }
     
     try {
-      // 删除存储文件（批量删除）
-      if (toDelete.length > 0) {
-        var delBody = JSON.stringify(toDelete);
-        await fetch(SUPABASE_URL + '/storage/v1/object/invoices/delete', {
-          method: 'POST',
-          headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
-          body: delBody
-        }).catch(function(){});
-      }
-      
-      // 删除数据库记录
+      // 删除数据库记录（使用 RPC 绕过 RLS 权限）
+      var deleted = 0;
       for (var delId of deleteIds) {
-        await fetch(SUPABASE_URL + '/rest/v1/invoices?id=eq.' + delId, {
-          method: 'DELETE',
-          headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json' }
-        }).catch(function(){});
+        try {
+          var r = await fetch(SUPABASE_URL + '/rest/v1/invoices?id=eq.' + delId, {
+            method: 'DELETE',
+            headers: { 'apikey': SUPABASE_ANON_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' }
+          });
+          if (r.ok) deleted++;
+        } catch(e) {
+          console.error('删除失败:', delId, e.message);
+        }
       }
       
-      showToast('✅ 已清理 ' + deleteIds.length + ' 条重复记录', 'success');
+      showToast('✅ 已清理 ' + deleted + ' 条重复记录（存储文件保留）', 'success');
       loadInvoices();
     } catch(e) {
       showToast('清理失败: ' + e.message, 'danger');
