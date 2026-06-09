@@ -590,7 +590,7 @@ async function init() {
       .select('total_amount, category_id, invoice_date')
       .gte('invoice_date', `${year}-01-01`)
       .lte('invoice_date', `${year}-12-31`)
-      .eq('status', 'approved');
+      ;
 
     if (annualInvoices) {
       const total = annualInvoices.reduce((s, i) => s + parseFloat(i.total_amount || 0), 0);
@@ -1256,7 +1256,7 @@ async function init() {
         .select('*')
         .gte('invoice_date', `${periodKey}-01`)
         .lte('invoice_date', `${periodKey}-31`)
-        .eq('status', 'approved');
+        ;
       invoices = data || [];
     } else if (reportType === 'quarterly') {
       const [year, q] = periodKey.split('-');
@@ -1267,14 +1267,14 @@ async function init() {
         .select('*')
         .gte('invoice_date', `${year}-${String(startM).padStart(2,'0')}-01`)
         .lte('invoice_date', `${year}-${String(endM).padStart(2,'0')}-31`)
-        .eq('status', 'approved');
+        ;
       invoices = data || [];
     } else {
       const { data } = await sb.from('invoices')
         .select('*')
         .gte('invoice_date', `${periodKey}-01-01`)
         .lte('invoice_date', `${periodKey}-12-31`)
-        .eq('status', 'approved');
+        ;
       invoices = data || [];
     }
 
