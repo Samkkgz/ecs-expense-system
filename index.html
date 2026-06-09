@@ -272,6 +272,7 @@
           <div class="report-actions mb-3">
             <select id="reportYearSelector" class="form-select form-select-sm" style="width:auto"></select>
             <select id="reportPeriodSelector" class="form-select form-select-sm" style="width:auto" onchange="loadReportData()"></select>
+            <select id="reportUserSelector" class="form-select form-select-sm" style="width:auto;display:none" onchange="loadReportData()"></select>
             <button class="btn btn-primary btn-sm" onclick="refreshReport()"><i class="bi bi-arrow-clockwise"></i> 刷新</button>
             <button class="btn btn-success btn-sm" onclick="exportReport()"><i class="bi bi-file-earmark-excel"></i> 导出报表</button>
           </div>
@@ -458,13 +459,31 @@ async function init() {
 
     // Check user profile/role
     const { data: profile } = await sb.from('profiles').select('*').eq('id', currentUser.id).single();
+    currentUser.profile = profile || { role: 'member' };
     if (profile) {
       document.getElementById('userName').textContent = profile.name || profile.email;
       if (profile.role === 'admin' || profile.role === 'super_admin') {
         document.getElementById('adminNavItem').style.display = 'flex';
       }
+      currentUser.isAdmin = true;
     } else {
       document.getElementById('userName').textContent = currentUser.email;
+      currentUser.isAdmin = false;
+    }
+    
+    // 管理员：加载报表用户选择器
+    if (currentUser.isAdmin) {
+      var userSel = document.getElementById('reportUserSelector');
+      if (userSel) {
+        userSel.style.display = 'inline-block';
+        var { data: allUsers } = await sb.from('profiles').select('id, email, name').order('email');
+        userSel.innerHTML = '<option value="">-- 全部用户 --</option>';
+        if (allUsers) {
+          userSel.innerHTML += allUsers.map(function(u) {
+            return '<option value="' + u.id + '">' + (u.name || u.email) + '</option>';
+          }).join('');
+        }
+      }
     }
 
     await loadCategories();
@@ -590,13 +609,15 @@ async function init() {
     document.getElementById('dashYearLabel').textContent = `- ${year}年`;
 
     // Annual stats (只统计已通过的发票)
-    const { data: annualInvoices } = await sb
-      .from('invoices')
+    var dashQuery = sb.from('invoices')
       .select('total_amount, category_id, invoice_date')
       .eq('status', 'approved')
       .gte('invoice_date', `${year}-01-01`)
-      .lte('invoice_date', `${year}-12-31`)
-      ;
+      .lte('invoice_date', `${year}-12-31`);
+    if (!currentUser.isAdmin) {
+      dashQuery = dashQuery.eq('uploaded_by', currentUser.id);
+    }
+    var { data: annualInvoices } = await dashQuery;
 
     if (annualInvoices) {
       const total = annualInvoices.reduce((s, i) => s + parseFloat(i.total_amount || 0), 0);
@@ -652,11 +673,12 @@ async function init() {
     }
 
     // Recent invoices
-    const { data: recent } = await sb
-      .from('invoices')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(5);
+    var recentQuery = sb.from('invoices').select('*');
+    if (!currentUser.isAdmin) {
+      recentQuery = recentQuery.eq('uploaded_by', currentUser.id);
+    }
+    recentQuery = recentQuery.order('created_at', { ascending: false }).limit(5);
+    const { data: recent } = await recentQuery;
     
     if (recent) {
       const container = document.getElementById('recentInvoices');
@@ -867,6 +889,11 @@ async function init() {
 
     let query = sb.from('invoices').select('*', { count: 'exact' });
     
+    // 用户数据隔离：普通用户只看自己的发票，管理员看全部
+    if (!currentUser.isAdmin) {
+      query = query.eq('uploaded_by', currentUser.id);
+    }
+    
     if (filterMonth) {
       query = query.gte('invoice_date', `${filterMonth}-01`).lte('invoice_date', `${filterMonth}-31`);
     }
@@ -922,6 +949,7 @@ async function init() {
           <td style="white-space:nowrap">
             <button class="btn btn-sm btn-outline-info" onclick="ocrInvoice(${inv.id})" title="OCR识别"><i class="bi bi-arrow-repeat"></i></button>
             <button class="btn btn-sm btn-outline-primary" onclick="editInvoice(${inv.id})"><i class="bi bi-pencil"></i></button>
+            <button class="btn btn-sm btn-outline-danger" onclick="deleteInvoice(${inv.id})" title="删除"><i class="bi bi-trash"></i></button>
           </td>
         </tr>`;
       }).join('');
@@ -947,7 +975,11 @@ async function init() {
   async function cleanupDuplicates() {
     if (!confirm('确定要清理重复上传的发票吗？同名同大小的文件只保留最新一份。')) return;
     
-    var { data: allInvs } = await sb.from('invoices').select('id, original_filename, file_size, created_at, storage_path').order('created_at', { ascending: false });
+    var cdQuery = sb.from('invoices').select('id, original_filename, file_size, created_at, storage_path');
+    if (!currentUser.isAdmin) {
+      cdQuery = cdQuery.eq('uploaded_by', currentUser.id);
+    }
+    var { data: allInvs } = await cdQuery.order('created_at', { ascending: false });
     if (!allInvs || allInvs.length === 0) return showToast('没有需要清理的数据', 'info');
     
     var seen = {};
@@ -1300,6 +1332,57 @@ async function init() {
     await updateInvoiceStatus('rejected');
   }
 
+  // ============================================================
+  // 删除发票
+  // ============================================================
+  async function deleteInvoice(id) {
+    if (!confirm('确定要删除此发票吗？此操作不可撤销。')) return;
+    
+    const inv = allInvoices.find(i => i.id === id);
+    if (!inv) return showToast('未找到发票记录', 'danger');
+    
+    try {
+      showToast('正在删除...', 'info');
+      
+      // 1. 删除数据库记录
+      var { data: { session } } = await sb.auth.getSession();
+      var token = session ? session.access_token : SUPABASE_ANON_KEY;
+      
+      var deleteDbUrl = SUPABASE_URL + '/rest/v1/invoices?id=eq.' + id;
+      var dbResp = await fetch(deleteDbUrl, {
+        method: 'DELETE',
+        headers: { 
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': 'Bearer ' + token,
+          'Content-Type': 'application/json',
+          'Prefer': 'return=minimal'
+        }
+      });
+      
+      // 2. 删除存储文件
+      var deleteStorageUrl = SUPABASE_URL + '/storage/v1/object/invoices/' + inv.storage_path;
+      await fetch(deleteStorageUrl, {
+        method: 'DELETE',
+        headers: {
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': 'Bearer ' + token
+        }
+      });
+      
+      // 关闭编辑弹窗（如果当前编辑的就是被删除的发票）
+      if (editingInvoiceId === id) {
+        document.getElementById('invoiceModal').style.display = 'none';
+        editingInvoiceId = null;
+      }
+      
+      showToast('✅ 已删除发票', 'success');
+      await loadInvoices();
+      await loadDashboard();
+    } catch(e) {
+      showToast('❌ 删除失败: ' + e.message, 'danger');
+    }
+  }
+
   async function updateInvoiceStatus(status) {
     if (!editingInvoiceId) return;
     const { error } = await sb.from('invoices').update({ status, updated_at: new Date().toISOString() }).eq('id', editingInvoiceId);
@@ -1319,7 +1402,11 @@ async function init() {
   async function exportInvoices() {
     showToast('正在生成Excel...', 'info');
     try {
-      const { data } = await sb.from('invoices').select('*').order('invoice_date', { ascending: false });
+      var exportQuery = sb.from('invoices').select('*');
+      if (!currentUser.isAdmin) {
+        exportQuery = exportQuery.eq('uploaded_by', currentUser.id);
+      }
+      const { data } = await exportQuery.order('invoice_date', { ascending: false });
       if (!data || data.length === 0) {
         showToast('暂无数据可导出', 'warning');
         return;
@@ -1407,6 +1494,12 @@ async function init() {
     
     // 查询已通过的发票
     var query = sb.from('invoices').select('total_amount, category_id, invoice_date, seller_name').eq('status', 'approved');
+    if (currentUser.isAdmin) {
+      var selUser = document.getElementById('reportUserSelector').value;
+      if (selUser) query = query.eq('uploaded_by', selUser);
+    } else {
+      query = query.eq('uploaded_by', currentUser.id);
+    }
     
     if (reportType === 'monthly') {
       var startDate = year + '-' + month + '-01';
@@ -1514,6 +1607,12 @@ async function init() {
     // 查询已通过的发票
     var year, month;
     var query = sb.from('invoices').select('*').eq('status', 'approved');
+    if (currentUser.isAdmin) {
+      var selUser = document.getElementById('reportUserSelector').value;
+      if (selUser) query = query.eq('uploaded_by', selUser);
+    } else {
+      query = query.eq('uploaded_by', currentUser.id);
+    }
     if (reportType === 'monthly') {
       year = periodKey.split('-')[0];
       month = periodKey.split('-')[1];
@@ -1673,9 +1772,45 @@ async function init() {
         </table>
       </div>
       <hr>
-      <h6>系统统计</h6>
-      <p class="text-muted">如需查看完整系统使用统计，请到 Supabase Dashboard 查看</p>
+      <h6>各用户费用统计（本年度）</h6>
+      <div id="adminStatsPerUser"><p class="text-muted">加载中...</p></div>
     `;
+    
+    // 加载各用户统计
+    var currentYear = new Date().getFullYear();
+    var { data: allInvs } = await sb.from('invoices').select('uploaded_by, total_amount, status, invoice_date')
+      .gte('invoice_date', currentYear + '-01-01')
+      .lte('invoice_date', currentYear + '-12-31');
+    
+    if (allInvs && allInvs.length > 0) {
+      var userStats = {};
+      allInvs.forEach(function(inv) {
+        if (!userStats[inv.uploaded_by]) {
+          userStats[inv.uploaded_by] = { total: 0, count: 0, approved: 0, approvedAmt: 0 };
+        }
+        userStats[inv.uploaded_by].total += parseFloat(inv.total_amount || 0);
+        userStats[inv.uploaded_by].count++;
+        if (inv.status === 'approved') {
+          userStats[inv.uploaded_by].approved++;
+          userStats[inv.uploaded_by].approvedAmt += parseFloat(inv.total_amount || 0);
+        }
+      });
+      
+      var statsHtml = '<div class="table-responsive"><table class="table table-sm"><thead><tr><th>用户</th><th>总发票数</th><th>已通过</th><th>总金额</th><th>已通过金额</th></tr></thead><tbody>';
+      profiles.forEach(function(p) {
+        var s = userStats[p.id];
+        if (s) {
+          statsHtml += '<tr><td>' + (p.name || p.email || '未知') + '</td><td>' + s.count + '</td><td>' + s.approved + '</td><td>¥' + s.total.toFixed(2) + '</td><td>¥' + s.approvedAmt.toFixed(2) + '</td></tr>';
+        }
+      });
+      statsHtml += '</tbody></table></div>';
+      
+      // 延迟填充
+      setTimeout(function() {
+        var el = document.getElementById('adminStatsPerUser');
+        if (el) el.innerHTML = statsHtml;
+      }, 100);
+    }
   }
 
   async function updateUserProfile(userId) {
