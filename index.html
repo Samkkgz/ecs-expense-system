@@ -999,31 +999,59 @@ async function init() {
   // ============================================================
   // 解析 OCR 文字
   // ============================================================
-  function parseOcrText(text) {
+    function parseOcrText(text) {
     var data = {};
     var t = text.replace(/\s+/g, ' ').trim();
+    t = t.replace(/([\u4e00-\u9fff])\s+(?=[\u4e00-\u9fff])/g, '$1');
     
-    // 发票号码
-    var m = t.match(/(?:发票|号码)\s*[：:]\s*(\d{8,25})/);
+    var m = t.match(/(?:发票|号码|票号)\s*[：:]*\s*(\d{8,25})/);
     if (m) data.invoice_number = m[1];
     
-    // 日期
     var dt = t.match(/(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日/);
     if (dt) data.invoice_date = dt[1] + '-' + String(dt[2]).padStart(2,'0') + '-' + String(dt[3]).padStart(2,'0');
-    
-    // 销售方（在"销售方"字段后面找名称）
-    var ss = t.split('销售方')[1];
-    if (ss) {
-      var n = ss.match(/(?:名称|名[称称])\s*[：:]\s*([^\s]{2,30})/);
-      if (n) data.seller_name = n[1].trim();
+    if (!dt) {
+      var dt2 = t.match(/(\d{4})[-年\s]+(\d{1,2})[-月\s]+(\d{1,2})/);
+      if (dt2 && dt2[1] > '2000') data.invoice_date = dt2[1] + '-' + String(dt2[2]).padStart(2,'0') + '-' + String(dt2[3]).padStart(2,'0');
     }
     
-    // 金额
-    var am = t.match(/[¥￥]\s*(\d+\.\d{2})/);
+    if (t.includes('铁路') || t.includes('客票')) {
+      data.item_description = '铁路交通费';
+      var stations = [...t.matchAll(/([\u4e00-\u9fff]{2,6}站)/g)].map(function(m){return m[1]});
+      if (stations.length >= 2) data.item_description = stations[0] + '->' + stations[stations.length-1] + ' \u9ad8\u94c1';
+      var pr = t.match(/[\u7968]\u4ef7\s*[\uff1a:]*\s*[\u00a5\uffe5]?\s*(\d+\.?\d*)/);
+      if (pr && !data.total_amount) data.total_amount = parseFloat(pr[1]);
+    }
+    
+    var ss = t.split('\u9500\u552e\u65b9')[1];
+    if (ss) {
+      var n = ss.match(/(?:\u540d\u79f0|\u540d[\u79f0\u79f0])\s*[\uff1a:]*\s*([^\s\n]{2,30})/);
+      if (n) data.seller_name = n[1].trim();
+      if (!data.seller_name) {
+        var lines = ss.split('\n').filter(function(l) { return /[\u4e00-\u9fff]/.test(l) && l.length < 30; });
+        if (lines.length > 0) data.seller_name = lines[0].trim();
+      }
+    }
+    
+    if (!data.buyer_name) {
+      var bs = t.split('\u8d2d\u4e70\u65b9')[1];
+      if (bs) {
+        var bn = bs.match(/(?:\u540d\u79f0|\u540d[\u79f0\u79f0])\s*[\uff1a:]*\s*([^\s]{2,30})/);
+        if (bn) data.buyer_name = bn[1].trim();
+      }
+    }
+    
+    var am = t.match(/\u4ef7\u7a0e\u5408\u8ba1[^]*?\u5c0f\u5199[^)]*\uff09[^]*?[\u00a5\uffe5]?\s*(\d+\.\d{2})/);
+    if (!am) am = t.match(/[\u00a5\uffe5]\s*(\d+\.\d{2})/);
+    if (!am) am = t.match(/\u91d1[\u989d\u989d]\s*[\uff1a:]*\s*[\u00a5\uffe5]?\s*(\d+\.\d{2})/);
+    if (!am) am = t.match(/[\u5408\u8ba1]\s*[\u00a5\uffe5]?\s*(\d+\.\d{2})/);
+    if (!am) {
+      var allNums = [...t.matchAll(/(\d+\.\d{2})/g)].map(function(m){return parseFloat(m[1])});
+      if (allNums.length > 0) am = [null, String(Math.max.apply(null, allNums))];
+    }
     if (am) data.total_amount = parseFloat(am[1]);
     
     return data;
-  }
+  }}
   
   // INVOICE EDIT MODAL
   // ============================================================
