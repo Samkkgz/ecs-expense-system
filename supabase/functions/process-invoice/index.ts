@@ -53,46 +53,53 @@ serve(async (req) => {
 
 // ============ 百度 OCR 识别 ============
 async function processBaiduOCR(supabase: any, invoiceId: number, imageBase64: string) {
-  // 百度OCR配置（后续可迁移到 Supabase Secrets）
   const apiKey = "FLR7tXFXrWCDtrtGiWm3N3e3";
   const secretKey = "wxAntGgHh5SSLufUw6JKNreY5J4wb0OA";
-  
+
   if (!apiKey || !secretKey) {
     return new Response(JSON.stringify({ success: false, error: "百度OCR未配置" }), { headers: corsHeaders() });
   }
 
   // 1. 获取 Access Token
-  console.log("正在获取百度OCR Access Token...");
   const tokenUrl = "https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials&client_id=" + apiKey + "&client_secret=" + secretKey;
   const tokenRes = await fetch(tokenUrl);
   const tokenData = await tokenRes.json();
   if (!tokenData.access_token) {
-    console.error("百度OCR认证失败:", JSON.stringify(tokenData));
     return new Response(JSON.stringify({ success: false, error: "百度OCR认证失败: " + (tokenData.error_description || JSON.stringify(tokenData)) }), { headers: corsHeaders() });
   }
   const accessToken = tokenData.access_token;
-  console.log("百度OCR Access Token 获取成功");
 
-  // 2. 调用增值税发票识别 OR 通用文字识别
-  // 先试增值税发票识别
-  let ocrResult = await callBaiduOCR(accessToken, imageBase64, "vat_invoice");
+  // 2. 试增值税发票识别
+  let ocrResult = null;
+  let lastError = "未知错误";
   
-  // 如果增值税发票识别返回的结果不是发票格式，改试通用文字识别
-  if (!ocrResult || !ocrResult.words_result || Object.keys(ocrResult.words_result).length === 0) {
-    ocrResult = await callBaiduOCR(accessToken, imageBase64, "general");
+  try {
+    ocrResult = await callBaiduOCR(accessToken, imageBase64, "vat_invoice");
+  } catch (e) {
+    lastError = "增值税发票识别: " + e.message;
+  }
+
+  // 3. 如果失败，试通用文字识别
+  if (!ocrResult) {
+    try {
+      ocrResult = await callBaiduOCR(accessToken, imageBase64, "general");
+      lastError = "通用文字识别: 成功";
+    } catch (e) {
+      lastError = "通用文字识别: " + e.message;
+    }
   }
 
   if (!ocrResult) {
-    return new Response(JSON.stringify({ success: false, error: "OCR识别失败" }), { headers: corsHeaders() });
+    return new Response(JSON.stringify({ success: false, error: "百度OCR调用失败: " + lastError }), { headers: corsHeaders() });
   }
 
-  // 3. 解析OCR结果
+  // 4. 解析OCR结果
   const data = parseBaiduOCRResult(ocrResult);
-  
-  // 4. 保存到数据库
+
+  // 5. 保存到数据库
   const rawText = JSON.stringify(ocrResult);
   await saveParsedData(supabase, invoiceId, rawText, data, 0.9);
-  
+
   return new Response(JSON.stringify({ success: true, data }), { headers: { "Content-Type": "application/json", ...corsHeaders() } });
 }
 
@@ -101,22 +108,24 @@ async function callBaiduOCR(accessToken: string, imageBase64: string, type: stri
     ? "https://aip.baidubce.com/rest/2.0/ocr/v1/vat_invoice?access_token=" + accessToken
     : "https://aip.baidubce.com/rest/2.0/ocr/v1/general_basic?access_token=" + accessToken;
 
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ image: imageBase64 })
-    });
-    const data = await res.json();
-    if (data.error_code) {
-      console.error("百度OCR错误:", data.error_code, data.error_msg);
-      return null;
-    }
-    return data;
-  } catch (e) {
-    console.error("百度OCR调用失败:", e.message);
-    return null;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ image: imageBase64 })
+  });
+  
+  const responseText = await res.text();
+  
+  let data;
+  try { data = JSON.parse(responseText); } catch (e) {
+    throw new Error("响应不是JSON: " + responseText.substring(0, 200));
   }
+  
+  if (data.error_code) {
+    throw new Error("错误码" + data.error_code + ": " + (data.error_msg || "未知"));
+  }
+  
+  return data;
 }
 
 function parseBaiduOCRResult(ocrData: any): any {
@@ -134,11 +143,10 @@ function parseBaiduOCRResult(ocrData: any): any {
     if (w.InvoiceType) data.item_description = w.InvoiceType;
   }
 
-  // 通用文字识别（对增值税发票识别失败的场合）
+  // 通用文字识别
   if (!data.invoice_number && ocrData.words_result) {
     const texts = ocrData.words_result.map((r: any) => r.words).join("\n");
     data.raw_text = texts;
-    // 尝试从通用文字中提取关键信息
     const parsed = parseInvoiceText(texts);
     Object.assign(data, parsed);
   }
@@ -146,12 +154,10 @@ function parseBaiduOCRResult(ocrData: any): any {
   return data;
 }
 
-// ============ PDF 文字提取 ============
+// ============ PDF 文字提取（不变） ============
 async function extractTextSmart(data: Uint8Array): Promise<string> {
   const text = new TextDecoder("utf-8", { fatal: false }).decode(data);
   const items: string[] = [];
-
-  // Method 1: Extract text between parentheses from BT/ET blocks
   const btEtPattern = /BT([\s\S]*?)ET/g;
   let m;
   while ((m = btEtPattern.exec(text)) !== null) {
@@ -168,8 +174,6 @@ async function extractTextSmart(data: Uint8Array): Promise<string> {
       if (/[\u4e00-\u9fff]/.test(line) || /\d{6,}/.test(line) || /[¥￥]/.test(line)) items.push(line);
     }
   }
-
-  // Method 2: Extract from TJ arrays
   if (items.length === 0) {
     const tjPat = /\[([^\]]*)\]\s*TJ/g;
     while ((m = tjPat.exec(text)) !== null) {
@@ -180,8 +184,6 @@ async function extractTextSmart(data: Uint8Array): Promise<string> {
       }
     }
   }
-
-  // Method 3: Extract from Tj operators
   if (items.length === 0) {
     const tjPat = /\(([^)]{3,})\)\s*Tj/g;
     while ((m = tjPat.exec(text)) !== null) {
@@ -189,19 +191,15 @@ async function extractTextSmart(data: Uint8Array): Promise<string> {
       if (/[\u4e00-\u9fff]/.test(s) || /\d{8,}/.test(s)) items.push(s);
     }
   }
-
-  // Check for CID encoding
   const allStrs: string[] = [];
   const strPat = /\(([^)]*)\)/g;
   while ((m = strPat.exec(text)) !== null) allStrs.push(m[1]);
   const cidCount = allStrs.filter(s => /^cid:\d+$/i.test(s)).length;
-
   if (cidCount > 5) {
     const decoded = decodeWithCMap(text, allStrs);
     if (decoded && /[\u4e00-\u9fff]/.test(decoded)) return decoded;
     return "(cid:)";
   }
-
   return items.join("\n");
 }
 
@@ -222,7 +220,6 @@ function decodeWithCMap(text: string, allStrs: string[]): string {
   }).join("");
 }
 
-// ============ 发票解析 ============
 function parseInvoiceText(text: string): any {
   const data: any = {};
   const t = text.replace(/\u200b/g, "").replace(/\s+/g, " ").trim();
@@ -230,7 +227,6 @@ function parseInvoiceText(text: string): any {
   if (m1) data.invoice_number = m1[1];
   const m2 = t.match(/(?:开票日期|开票⽇期)\s*[：:]\s*(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日/);
   if (m2) data.invoice_date = m2[1] + "-" + m2[2].padStart(2,"0") + "-" + m2[3].padStart(2,"0");
-
   if (t.includes("铁路")) {
     data.item_description = "铁路交通费";
     const st = [...t.matchAll(/([\u4e00-\u9fff]{2,6}站)/g)].map((x: any) => x[1]);
@@ -239,7 +235,6 @@ function parseInvoiceText(text: string): any {
     if (pr) data.total_amount = parseFloat(pr[1]);
     return data;
   }
-
   const bs = section(t, "购买方", "销售方");
   if (bs) { const n = bs.match(/(?:名称|名[称称])\s*[：:]\s*(.+?)(?:\s|$)/); if (n) data.buyer_name = n[1].trim(); }
   const ss = section(t, "销售方", "项目名称|开票人|备注");
@@ -252,7 +247,6 @@ function parseInvoiceText(text: string): any {
   if (tx) data.tax_amount = parseFloat(tx[1]);
   const tl = t.match(/价税合计[^]*?小写[^)]*\）[^]*?¥?\s*(\d+\.?\d*)/);
   if (tl) data.total_amount = parseFloat(tl[1]);
-
   return data;
 }
 
@@ -271,12 +265,8 @@ async function saveParsedData(supabase: any, invoiceId: number, rawText: string,
   if (data.total_amount !== undefined) upd.total_amount = data.total_amount;
   if (data.tax_amount !== undefined) upd.tax_amount = data.tax_amount;
   if (data.invoice_date) upd.expense_date = data.invoice_date;
-
   await supabase.from("invoices").update(upd).eq("id", invoiceId);
-  
-  // 自动分类
   await autoCategorize(supabase, invoiceId, data);
-  // 刷新报表
   if (data.invoice_date) await refreshReports(supabase, data.invoice_date);
 }
 
