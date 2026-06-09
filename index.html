@@ -998,7 +998,9 @@ async function init() {
         editInvoice(id);
         showToast('✅ OCR识别完成，请核对信息', 'success');
       } else {
-        showToast('⚠️ OCR暂不可用（需要配置百度云Key），请手动填写', 'warning');
+        var errMsg = ocrData.error || (ocrData.message) || '未知错误';
+        showToast('⚠️ OCR识别失败: ' + errMsg, 'warning');
+        console.error('OCR错误详情:', ocrData);
         editInvoice(id);
       }
     } catch(e) {

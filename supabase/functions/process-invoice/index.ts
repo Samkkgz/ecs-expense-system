@@ -62,12 +62,16 @@ async function processBaiduOCR(supabase: any, invoiceId: number, imageBase64: st
   }
 
   // 1. 获取 Access Token
-  const tokenRes = await fetch("https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials&client_id=" + apiKey + "&client_secret=" + secretKey);
+  console.log("正在获取百度OCR Access Token...");
+  const tokenUrl = "https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials&client_id=" + apiKey + "&client_secret=" + secretKey;
+  const tokenRes = await fetch(tokenUrl);
   const tokenData = await tokenRes.json();
   if (!tokenData.access_token) {
-    return new Response(JSON.stringify({ success: false, error: "百度OCR认证失败" }), { headers: corsHeaders() });
+    console.error("百度OCR认证失败:", JSON.stringify(tokenData));
+    return new Response(JSON.stringify({ success: false, error: "百度OCR认证失败: " + (tokenData.error_description || JSON.stringify(tokenData)) }), { headers: corsHeaders() });
   }
   const accessToken = tokenData.access_token;
+  console.log("百度OCR Access Token 获取成功");
 
   // 2. 调用增值税发票识别 OR 通用文字识别
   // 先试增值税发票识别
