@@ -288,5 +288,5 @@ async function refreshReports(supabase: any, ds: string) {
   const d = new Date(ds);
   const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,"0"), q = Math.ceil((d.getMonth()+1)/3);
   for (const [t, k] of [["monthly", y + "-" + m],["quarterly", y + "-Q" + q],["annual", String(y)]] as const)
-    await supabase.rpc("refresh_expense_report", { p_type: t, p_key: k }).catch(() => {});
+    try { await supabase.rpc("refresh_expense_report", { p_type: t, p_key: k }); } catch(_) {}
 }
