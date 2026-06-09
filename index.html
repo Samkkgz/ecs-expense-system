@@ -1298,16 +1298,40 @@ async function init() {
         return;
       }
 
-      // Build CSV
-      const headers = ['发票号码', '开票日期', '商家名称', '购买方', '项目描述', '金额', '税额', '价税合计', '类目', '地点', '状态', '备注'];
-      const rows = data.map(inv => {
-        const cat = categories.find(c => c.id === inv.category_id);
-        return [inv.invoice_number, inv.invoice_date, inv.seller_name, inv.buyer_name, inv.item_description, 
-          inv.amount, inv.tax_amount, inv.total_amount, cat?.name || '', inv.project_location, inv.status, inv.expense_note]
-          .map(v => `"${v || ''}"`).join(',');
+      // 统计类目汇总和明细
+      var approvedInvs = data.filter(function(inv) { return inv.status === 'approved'; });
+      var catTotals = {};
+      data.forEach(function(inv) {
+        var cat = categories.find(function(c) { return c.id === inv.category_id; });
+        var catName = (cat && cat.name) || '未分类';
+        catTotals[catName] = (catTotals[catName] || 0) + parseFloat(inv.total_amount || 0);
       });
-      const csv = '\uFEFF' + headers.join(',') + '\n' + rows.join('\n');
-      
+      var hdrs = ['序号','发票号码','开票日期','商家名称','项目描述','金额','税额','价税合计','费用类目','地点','状态','备注'];
+      var rows = data.map(function(inv, idx) {
+        var cat = categories.find(function(c) { return c.id === inv.category_id; });
+        var st = inv.status === 'approved' ? '已通过' : inv.status === 'rejected' ? '已驳回' : '待审核';
+        return [idx+1, inv.invoice_number, inv.invoice_date, inv.seller_name, inv.item_description,
+          inv.amount || '', inv.tax_amount || '', inv.total_amount || '', (cat && cat.name) || '未分类',
+          inv.project_location || '', st, inv.expense_note || ''].map(function(v) { return '"' + (v || '') + '"'; }).join(',');
+      });
+      var grandTotal = data.reduce(function(s, inv) { return s + parseFloat(inv.total_amount || 0); }, 0);
+      var approvedTotal = approvedInvs.reduce(function(s, inv) { return s + parseFloat(inv.total_amount || 0); }, 0);
+      var sumRows = [];
+      for (var key in catTotals) {
+        sumRows.push(',,,"' + key + '",,,,' + catTotals[key].toFixed(2) + ',,,,');
+      }
+      var csv = '\uFEFF';
+      csv += 'ECS报销明细表,,,,,,,,,,,\n';
+      csv += '导出时间:,' + new Date().toLocaleString('zh-CN') + ',,,,,,,,,,,\n';
+      csv += ',,,,,,,,,,,,\n';
+      csv += hdrs.join(',') + '\n';
+      csv += rows.join('\n') + '\n';
+      csv += ',,,,,,,,,,,,\n';
+      csv += ',,,【费用类目汇总】,,,,,,,,\n';
+      csv += ',,,类目,,,,金额,,,,,\n';
+      csv += sumRows.join('\n') + '\n';
+      csv += ',,,【总计】,' + grandTotal.toFixed(2) + ',,,,,,,\n';
+      csv += ',,,其中已通过,' + approvedInvs.length + '张,' + approvedTotal.toFixed(2) + ',,,,,\n';
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
