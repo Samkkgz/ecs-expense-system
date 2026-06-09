@@ -785,12 +785,14 @@ async function init() {
         var ext = file.name.lastIndexOf('.') > -1 ? file.name.substring(file.name.lastIndexOf('.')) : '.pdf';
         var storagePath = year + '/' + mon + '/' + Date.now() + ext;
         // Upload to Storage using REST API directly
+        var { data: { session } } = await sb.auth.getSession();
+        var token = session ? session.access_token : SUPABASE_ANON_KEY;
         var uploadUrl = SUPABASE_URL + '/storage/v1/object/invoices/' + storagePath;
         var uploadRes = await fetch(uploadUrl, {
           method: 'POST',
           headers: {
             'apikey': SUPABASE_ANON_KEY,
-            'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+            'Authorization': 'Bearer ' + token,
           },
           body: file
         });
@@ -799,17 +801,30 @@ async function init() {
           throw new Error(errText || ('HTTP ' + uploadRes.status));
         }
 
-        // Create invoice record via RPC (bypasses RLS)
-        var { error: rpcErr } = await sb.rpc('insert_invoice', {
-          p_storage_path: 'invoices/' + storagePath,
-          p_original_filename: file.name,
-          p_file_size: file.size,
-          p_category_id: categoryId || null,
-          p_project_location: location || null,
-          p_uploaded_by: currentUser.id,
-          p_status: 'pending'
+        // Create invoice record via direct INSERT with session token
+        var insertUrl = SUPABASE_URL + '/rest/v1/invoices';
+        var insertResp = await fetch(insertUrl, {
+          method: 'POST',
+          headers: {
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': 'Bearer ' + token,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=minimal'
+          },
+          body: JSON.stringify({
+            storage_path: storagePath,
+            original_filename: file.name,
+            file_size: file.size,
+            category_id: categoryId || null,
+            project_location: location || null,
+            uploaded_by: currentUser.id,
+            status: 'pending'
+          })
         });
-        if (rpcErr) throw new Error(rpcErr.message || JSON.stringify(rpcErr));
+        if (!insertResp.ok) {
+          var insertErr = await insertResp.text();
+          throw new Error(insertErr || ('HTTP ' + insertResp.status));
+        }
 
         resultDiv.innerHTML += `<div class="alert alert-success">✅ 上传成功: ${file.name}</div>`;
       } catch (e) {
