@@ -270,30 +270,69 @@ async function saveParsedData(supabase: any, invoiceId: number, rawText: string,
   if (data.invoice_date) await refreshReports(supabase, data.invoice_date);
 }
 
+// 中国主要城市列表（用于从商家名称中提取城市）
+const CHINA_CITIES = [
+  "广州", "深圳", "珠海", "汕头", "佛山", "韶关", "湛江", "肇庆", "江门", "茂名",
+  "惠州", "梅州", "汕尾", "河源", "阳江", "清远", "东莞", "中山", "潮州", "揭阳", "云浮",
+  "北京", "上海", "天津", "重庆",
+  "南京", "苏州", "无锡", "常州", "镇江", "扬州", "南通", "徐州", "杭州", "宁波",
+  "温州", "嘉兴", "绍兴", "金华", "成都", "武汉", "长沙", "西安", "郑州", "济南",
+  "青岛", "大连", "沈阳", "厦门", "福州", "合肥", "昆明", "贵阳", "南宁", "海口",
+  "三亚", "拉萨", "兰州", "西宁", "银川", "乌鲁木齐", "呼和浩特", "石家庄",
+  "太原", "哈尔滨", "长春", "南昌", "香港", "澳门", "台北"
+];
+
+function detectCity(text: string): string | null {
+  if (!text) return null;
+  for (const city of CHINA_CITIES) {
+    if (text.includes(city)) return city;
+  }
+  return null;
+}
+
 async function autoCategorize(supabase: any, id: number, data: any) {
-  const s = (data.seller_name || "").toLowerCase();
+  const s = (data.seller_name || "");
+  const si = s.toLowerCase();
   const i = (data.item_description || "").toLowerCase();
-  const loc = (data.project_location || "").toLowerCase();
   
-  // 非广州地区自动归类为出差
-  const isOutOfTown = loc && loc !== "" && !loc.includes("广州");
+  // 从商家名称中检测城市
+  const sellerCity = detectCity(s) || detectCity(data.seller_name || "");
+  // 从项目描述中检测城市
+  const descCity = detectCity(data.item_description || "");
+  // 确定最终城市
+  const city = sellerCity || descCity;
+  
+  // 自动填写项目地点
+  let projectLocation = data.project_location || "";
+  if (city && !projectLocation) {
+    projectLocation = city;
+  }
+  
+  // 判断是否为出差（非广州）
+  const isOutOfTown = city && city !== "广州";
   
   let cat = "";
-  if (i.includes("铁路") || i.includes("高铁") || i.includes("→") || s.includes("航空")) {
-    cat = isOutOfTown ? "出差交通费" : "出差交通费";
-  } else if (s.includes("油") || s.includes("石油") || s.includes("石化") || s.includes("加油站")) {
+  if (i.includes("铁路") || i.includes("高铁") || i.includes("→") || si.includes("航空")) {
     cat = "出差交通费";
-  } else if (s.includes("餐饮") || s.includes("餐厅")) {
+  } else if (si.includes("油") || si.includes("石油") || si.includes("石化") || si.includes("加油站")) {
+    cat = isOutOfTown ? "出差交通费" : "出差交通费";
+  } else if (si.includes("餐饮") || si.includes("餐厅") || si.includes("饭")) {
     cat = (i.includes("客情") || i.includes("招待")) ? "客情餐饮费" : (isOutOfTown ? "出差餐饮费" : "出差餐饮费");
-  } else if (s.includes("酒店") || s.includes("宾馆")) {
-    cat = isOutOfTown ? "出差住房费" : "出差住房费";
+  } else if (si.includes("酒店") || si.includes("宾馆") || si.includes("住宿")) {
+    cat = "出差住房费";
   } else if (isOutOfTown) {
-    // 非广州无法归类的，默认给出差费用
     cat = "其他";
   }
+  
+  // 更新分类和地点
+  const updates: Record<string, any> = {};
+  if (projectLocation) updates.project_location = projectLocation;
   if (cat) {
     const { data: c } = await supabase.from("expense_categories").select("id").eq("name", cat).single();
-    if (c) await supabase.from("invoices").update({ category_id: c.id }).eq("id", id);
+    if (c) updates.category_id = c.id;
+  }
+  if (Object.keys(updates).length > 0) {
+    await supabase.from("invoices").update(updates).eq("id", id);
   }
 }
 

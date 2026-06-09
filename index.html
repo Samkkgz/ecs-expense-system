@@ -80,6 +80,9 @@
     .report-actions { display: flex; gap: 8px; flex-wrap: wrap; }
     
     /* Badge */
+    .section-card { padding-top: 16px; }
+    .table td, .table th { padding: 8px 6px; font-size: 13px; }
+    .filter-bar { margin-bottom: 8px; }
     .badge-status { font-size: 12px; padding: 4px 8px; border-radius: 6px; }
     .badge-pending { background: #fff3cd; color: #856404; }
     .badge-approved { background: #d4edda; color: #155724; }
@@ -1202,17 +1205,52 @@ async function init() {
     }, 100);
   }
 
+  // 中国城市列表（用于自动识别地点）
+  var CHINA_CITIES = ["广州","深圳","珠海","佛山","东莞","中山","惠州","北京","上海","天津","重庆","杭州","南京","苏州","成都","武汉","长沙","西安","郑州","济南","青岛","大连","沈阳","厦门","福州","合肥","昆明","贵阳","南宁","海口","三亚","香港","澳门"];
+
+  function detectCity(text) {
+    if (!text) return null;
+    text = String(text);
+    for (var ci = 0; ci < CHINA_CITIES.length; ci++) {
+      if (text.indexOf(CHINA_CITIES[ci]) >= 0) return CHINA_CITIES[ci];
+    }
+    return null;
+  }
+
   async function saveInvoiceEdit() {
     if (!editingInvoiceId) return;
+    var sellerName = document.getElementById('editSeller').value;
+    var itemDesc = document.getElementById('editDescription').value;
+    var location = document.getElementById('editLocation').value;
+    
+    // 自动检测城市
+    if (!location) {
+      location = detectCity(sellerName) || detectCity(itemDesc) || '';
+    }
+    
+    // 根据地点自动建议类目
+    var catSelect = document.getElementById('editCategory');
+    var currentCat = parseInt(catSelect.value);
+    var currentLocation = location;
+    var suggestedCat = currentCat;
+    if (currentLocation && currentLocation !== '广州' && !currentCat) {
+      // 非广州未分类，建议出差相关
+      var itemDesc_lower = (itemDesc || '').toLowerCase();
+      var seller_lower = (sellerName || '').toLowerCase();
+      if (seller_lower.indexOf('餐饮') >= 0 || seller_lower.indexOf('餐厅') >= 0 || seller_lower.indexOf('饭') >= 0) {
+        suggestedCat = -1;
+      }
+    }
+    
     const updates = {
       invoice_number: document.getElementById('editNumber').value,
       invoice_date: document.getElementById('editDate').value || null,
-      seller_name: document.getElementById('editSeller').value,
+      seller_name: sellerName,
       total_amount: parseFloat(document.getElementById('editAmount').value) || 0,
-      category_id: parseInt(document.getElementById('editCategory').value),
-      project_location: document.getElementById('editLocation').value,
+      category_id: currentCat,
+      project_location: location,
       expense_note: document.getElementById('editNote').value,
-      item_description: document.getElementById('editDescription').value,
+      item_description: itemDesc,
       updated_at: new Date().toISOString()
     };
 
