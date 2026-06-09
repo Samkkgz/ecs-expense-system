@@ -1038,6 +1038,8 @@ async function init() {
 
     document.getElementById('invoiceModal').style.display = 'block';
     
+    var pdfUrl = SUPABASE_URL + '/storage/v1/object/public/invoices/' + inv.storage_path;
+    
     document.getElementById('invoiceModalBody').innerHTML = `
       <div class="row g-3">
         <div class="col-md-6">
@@ -1059,7 +1061,8 @@ async function init() {
         <div class="col-md-6">
           <label class="form-label">费用类目</label>
           <select class="form-select" id="editCategory">
-            ${categories.map(c => `<option value="${c.id}" ${c.id === inv.category_id ? 'selected' : ''}>${c.name}</option>`).join('')}
+            <option value="">-- 请选择 --</option>
+            ${categories.map(c => '<option value="' + c.id + '" ' + (c.id === inv.category_id ? 'selected' : '') + '>' + c.name + '</option>').join('')}
           </select>
         </div>
         <div class="col-md-6">
@@ -1074,9 +1077,26 @@ async function init() {
           <label class="form-label">项目描述</label>
           <input class="form-control" id="editDescription" value="${inv.item_description || ''}">
         </div>
+        <div class="col-12">
+          <hr>
+          <div class="d-flex align-items-center gap-2 mb-2">
+            <strong>原始发票</strong>
+            <a href="${pdfUrl}" target="_blank" class="btn btn-sm btn-outline-secondary" rel="noopener">📄 新标签页打开</a>
+          </div>
+          <div id="pdfPreviewBox" style="border:1px solid #ddd;border-radius:8px;max-height:500px;overflow:auto;background:#f8f9fa;text-align:center;padding:20px">
+            <p class="text-muted">加载PDF预览中...</p>
+          </div>
+        </div>
       </div>
     `;
     modal.show();
+    
+    // Load PDF preview
+    setTimeout(function() {
+      var box = document.getElementById('pdfPreviewBox');
+      if (!box) return;
+      box.innerHTML = '<iframe src="' + pdfUrl + '#view=FitH" style="width:100%;height:500px;border:none;border-radius:8px"></iframe>';
+    }, 100);
   }
 
   async function saveInvoiceEdit() {
