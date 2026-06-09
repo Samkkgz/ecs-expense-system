@@ -1356,30 +1356,6 @@ async function init() {
       showToast('导出失败: ' + e.message, 'danger');
     }
   }
-      var csv = '\uFEFF';
-      csv += 'ECS报销明细表,,,,,,,,,,,\n';
-      csv += '导出时间:,' + new Date().toLocaleString('zh-CN') + ',,,,,,,,,,,\n';
-      csv += ',,,,,,,,,,,,\n';
-      csv += hdrs.join(',') + '\n';
-      csv += rows.join('\n') + '\n';
-      csv += ',,,,,,,,,,,,\n';
-      csv += ',,,【费用类目汇总】,,,,,,,,\n';
-      csv += ',,,类目,,,,金额,,,,,\n';
-      csv += sumRows.join('\n') + '\n';
-      csv += ',,,【总计】,' + grandTotal.toFixed(2) + ',,,,,,,\n';
-      csv += ',,,其中已通过,' + approvedInvs.length + '张,' + approvedTotal.toFixed(2) + ',,,,,\n';
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `ECS报销明细_${new Date().toISOString().slice(0,10)}.csv`;
-      a.click();
-      URL.revokeObjectURL(url);
-      showToast('✅ 导出成功', 'success');
-    } catch (e) {
-      showToast('导出失败: ' + e.message, 'danger');
-    }
-  }
 
   // ============================================================
   // REPORTS
