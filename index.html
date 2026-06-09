@@ -966,11 +966,13 @@ async function init() {
     }
     
     try {
-      // 删除存储文件
-      for (var path of toDelete) {
-        await fetch(SUPABASE_URL + '/storage/v1/object/invoices/' + path, {
-          method: 'DELETE',
-          headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+      // 删除存储文件（批量删除）
+      if (toDelete.length > 0) {
+        var delBody = JSON.stringify(toDelete);
+        await fetch(SUPABASE_URL + '/storage/v1/object/invoices/delete', {
+          method: 'POST',
+          headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+          body: delBody
         }).catch(function(){});
       }
       
@@ -978,7 +980,7 @@ async function init() {
       for (var delId of deleteIds) {
         await fetch(SUPABASE_URL + '/rest/v1/invoices?id=eq.' + delId, {
           method: 'DELETE',
-          headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY }
+          headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json' }
         }).catch(function(){});
       }
       
