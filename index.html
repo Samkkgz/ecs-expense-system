@@ -930,7 +930,7 @@ async function init() {
 
   // ============================================================
     // ============================================================
-  // 发票识别（调用服务器端提取文字）
+  // 发票识别（文字提取 + 百度OCR图片识别）
   // ============================================================
   async function ocrInvoice(id) {
     const inv = allInvoices.find(i => i.id === id);
@@ -940,11 +940,11 @@ async function init() {
     if (btn) btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
     
     try {
-      // 调用 Supabase Edge Function 提取文字
-      btn.innerHTML = '识别中...';
       var { data: { session } } = await sb.auth.getSession();
       var token = session ? session.access_token : SUPABASE_ANON_KEY;
       
+      // 第一步：尝试服务器端文字提取
+      btn.innerHTML = '文字提取中...';
       var funcRes = await fetch(SUPABASE_URL + '/functions/v1/process-invoice', {
         method: 'POST',
         headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
@@ -953,16 +953,52 @@ async function init() {
       var funcData = await funcRes.json();
       
       if (funcData.success && funcData.data) {
-        // 成功提取并保存了数据
+        // 文字提取成功
         btn.innerHTML = '✓';
         Object.assign(inv, funcData.data);
         if (funcData.data.invoice_date) inv.invoice_date = funcData.data.invoice_date;
         await loadInvoices();
         editInvoice(id);
         showToast('✅ 识别完成，请核对信息', 'success');
+        if (btn) btn.innerHTML = '↻';
+        return;
+      }
+      
+      // 第二步：PDF渲染为图片，送百度OCR
+      btn.innerHTML = '渲染PDF中...';
+      var dlUrl = SUPABASE_URL + '/storage/v1/object/public/invoices/' + inv.storage_path;
+      var dlRes = await fetch(dlUrl);
+      if (!dlRes.ok) throw new Error('下载PDF失败');
+      var pdfBlob = await dlRes.blob();
+      
+      var buf = await pdfBlob.arrayBuffer();
+      var pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+      var pg = await pdf.getPage(1);
+      var vp = pg.getViewport({ scale: 1.5 });
+      var can = document.createElement('canvas');
+      can.width = vp.width; can.height = vp.height;
+      var ctx = can.getContext('2d');
+      await pg.render({ canvasContext: ctx, viewport: vp }).promise;
+      
+      btn.innerHTML = '百度OCR识别中...';
+      var imageBase64 = can.toDataURL('image/jpeg', 0.85).split(',')[1];
+      
+      var ocrRes = await fetch(SUPABASE_URL + '/functions/v1/process-invoice', {
+        method: 'POST',
+        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ record: { id: id, storage_path: inv.storage_path, image_base64: imageBase64 } })
+      });
+      var ocrData = await ocrRes.json();
+      
+      if (ocrData.success && ocrData.data) {
+        btn.innerHTML = '✓';
+        Object.assign(inv, ocrData.data);
+        if (ocrData.data.invoice_date) inv.invoice_date = ocrData.data.invoice_date;
+        await loadInvoices();
+        editInvoice(id);
+        showToast('✅ OCR识别完成，请核对信息', 'success');
       } else {
-        // 无法自动提取，打开编辑窗口让用户手动填写
-        showToast('⚠️ 该发票无文字信息，请手动填写', 'warning');
+        showToast('⚠️ OCR暂不可用（需要配置百度云Key），请手动填写', 'warning');
         editInvoice(id);
       }
     } catch(e) {
