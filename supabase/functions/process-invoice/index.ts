@@ -53,8 +53,9 @@ serve(async (req) => {
 
 // ============ 百度 OCR 识别 ============
 async function processBaiduOCR(supabase: any, invoiceId: number, imageBase64: string) {
-  const apiKey = Deno.env.get("BAIDU_OCR_API_KEY");
-  const secretKey = Deno.env.get("BAIDU_OCR_SECRET_KEY");
+  // 百度OCR配置（后续可迁移到 Supabase Secrets）
+  const apiKey = "FLR7tXFXrWCDtrtGiWm3N3e3";
+  const secretKey = "wxAntGgHh5SSLufUw6JKNreY5J4wb0OA";
   
   if (!apiKey || !secretKey) {
     return new Response(JSON.stringify({ success: false, error: "百度OCR未配置" }), { headers: corsHeaders() });
