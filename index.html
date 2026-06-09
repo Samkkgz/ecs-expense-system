@@ -1261,7 +1261,7 @@ async function init() {
       showToast('✅ 保存成功', 'success');
       loadInvoices();
       loadDashboard();
-      editInvoice(editingInvoiceId); // 保持打开，刷新数据
+      editInvoice(editingInvoiceId);
     }
   }
 
@@ -1282,7 +1282,7 @@ async function init() {
       showToast(`✅ 已${status === 'approved' ? '通过' : '驳回'}`, 'success');
       loadInvoices();
       loadDashboard();
-      editInvoice(editingInvoiceId); // 保持打开
+      closeModal();
     }
   }
 
