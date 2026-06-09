@@ -268,7 +268,7 @@
           </ul>
           <div class="report-actions mb-3">
             <select id="reportYearSelector" class="form-select form-select-sm" style="width:auto"></select>
-            <select id="reportPeriodSelector" class="form-select form-select-sm" style="width:auto"></select>
+            <select id="reportPeriodSelector" class="form-select form-select-sm" style="width:auto" onchange="loadReportData()"></select>
             <button class="btn btn-primary btn-sm" onclick="refreshReport()"><i class="bi bi-arrow-clockwise"></i> 刷新</button>
             <button class="btn btn-success btn-sm" onclick="exportReport()"><i class="bi bi-file-earmark-excel"></i> 导出报表</button>
           </div>
@@ -1221,9 +1221,9 @@ async function init() {
       showToast('保存失败: ' + error.message, 'danger');
     } else {
       showToast('✅ 保存成功', 'success');
-      closeModal();
       loadInvoices();
       loadDashboard();
+      editInvoice(editingInvoiceId); // 保持打开，刷新数据
     }
   }
 
@@ -1242,9 +1242,9 @@ async function init() {
       showToast('操作失败', 'danger');
     } else {
       showToast(`✅ 已${status === 'approved' ? '通过' : '驳回'}`, 'success');
-      closeModal();
       loadInvoices();
       loadDashboard();
+      editInvoice(editingInvoiceId); // 保持打开
     }
   }
 

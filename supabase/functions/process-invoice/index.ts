@@ -273,11 +273,24 @@ async function saveParsedData(supabase: any, invoiceId: number, rawText: string,
 async function autoCategorize(supabase: any, id: number, data: any) {
   const s = (data.seller_name || "").toLowerCase();
   const i = (data.item_description || "").toLowerCase();
+  const loc = (data.project_location || "").toLowerCase();
+  
+  // 非广州地区自动归类为出差
+  const isOutOfTown = loc && loc !== "" && !loc.includes("广州");
+  
   let cat = "";
-  if (i.includes("铁路") || i.includes("高铁") || i.includes("→") || s.includes("航空") || s.includes("油")) cat = "出差交通费";
-  else if (s.includes("餐饮") || s.includes("餐厅")) cat = i.includes("客情") ? "客情餐饮费" : "出差餐饮费";
-  else if (s.includes("酒店") || s.includes("宾馆")) cat = "出差住房费";
-  else if (s.includes("石油") || s.includes("石化") || s.includes("加油站")) cat = "出差交通费";
+  if (i.includes("铁路") || i.includes("高铁") || i.includes("→") || s.includes("航空")) {
+    cat = isOutOfTown ? "出差交通费" : "出差交通费";
+  } else if (s.includes("油") || s.includes("石油") || s.includes("石化") || s.includes("加油站")) {
+    cat = "出差交通费";
+  } else if (s.includes("餐饮") || s.includes("餐厅")) {
+    cat = (i.includes("客情") || i.includes("招待")) ? "客情餐饮费" : (isOutOfTown ? "出差餐饮费" : "出差餐饮费");
+  } else if (s.includes("酒店") || s.includes("宾馆")) {
+    cat = isOutOfTown ? "出差住房费" : "出差住房费";
+  } else if (isOutOfTown) {
+    // 非广州无法归类的，默认给出差费用
+    cat = "其他";
+  }
   if (cat) {
     const { data: c } = await supabase.from("expense_categories").select("id").eq("name", cat).single();
     if (c) await supabase.from("invoices").update({ category_id: c.id }).eq("id", id);
