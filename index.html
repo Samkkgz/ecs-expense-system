@@ -780,7 +780,7 @@ async function init() {
         continue;
       }
 
-      // 去重检查：是否已上传过同名同大小的文件
+      // 去重检查：同名同大小的文件视为重复（防止重复上传）
       var { data: dupes } = await sb.from('invoices').select('id').eq('original_filename', file.name).eq('file_size', file.size).limit(1);
       if (dupes && dupes.length > 0) {
         resultDiv.innerHTML += `<div class="alert alert-info">⏭ 已跳过重复文件: ${file.name}（之前已上传）</div>`;
@@ -1039,7 +1039,7 @@ async function init() {
       var buf = await pdfBlob.arrayBuffer();
       var pdf = await pdfjsLib.getDocument({ data: buf }).promise;
       var pg = await pdf.getPage(1);
-      var vp = pg.getViewport({ scale: 1.5 });
+      var vp = pg.getViewport({ scale: 2.0 });
       var can = document.createElement('canvas');
       can.width = vp.width; can.height = vp.height;
       var ctx = can.getContext('2d');

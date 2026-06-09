@@ -96,7 +96,24 @@ async function processBaiduOCR(supabase: any, invoiceId: number, imageBase64: st
   // 4. 解析OCR结果
   const data = parseBaiduOCRResult(ocrResult);
 
-  // 5. 保存到数据库
+  // 5. 发票号码去重：如果相同号码已存在，合并到旧记录并删除当前
+  if (data.invoice_number) {
+    const { data: existing } = await supabase.from("invoices")
+      .select("id, storage_path")
+      .eq("invoice_number", data.invoice_number)
+      .neq("id", invoiceId)
+      .limit(1);
+    if (existing && existing.length > 0) {
+      // 删除当前重复记录（保留旧记录）
+      await supabase.from("invoices").delete().eq("id", invoiceId);
+      await supabase.storage.from("invoices").remove([record.storage_path]).catch(() => {});
+      // 更新旧记录
+      await saveParsedData(supabase, existing[0].id, JSON.stringify(ocrResult), data, 0.9);
+      return new Response(JSON.stringify({ success: true, data: Object.assign(data, { id: existing[0].id, merged: true }) }), { headers: { "Content-Type": "application/json", ...corsHeaders() } });
+    }
+  }
+
+  // 6. 保存到数据库
   const rawText = JSON.stringify(ocrResult);
   await saveParsedData(supabase, invoiceId, rawText, data, 0.9);
 
