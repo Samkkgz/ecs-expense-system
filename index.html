@@ -224,7 +224,7 @@
             <h5>点击或拖拽上传</h5>
             <p>支持 PDF 格式的电子发票</p>
           </div>
-          <input type="file" id="fileInput" accept=".pdf" multiple style="display:none" onchange="handleFileSelect(event)">
+          <input type="file" id="fileInput" accept=".pdf,.png,.jpg,.jpeg,.bmp" multiple style="display:none" onchange="handleFileSelect(event)">
           <div class="upload-progress" id="uploadProgress">
             <div class="progress"><div class="progress-bar" id="progressBar" style="width:0%">0%</div></div>
             <p class="mt-2 text-muted" id="uploadStatus">准备上传...</p>
@@ -775,8 +775,8 @@ async function init() {
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      if (!file.name.toLowerCase().endsWith('.pdf')) {
-        resultDiv.innerHTML += `<div class="alert alert-warning">⏭ 跳过非PDF文件: ${file.name}</div>`;
+      if (!file.name.toLowerCase().endsWith('.pdf') && !file.name.toLowerCase().endsWith('.png') && !file.name.toLowerCase().endsWith('.jpg') && !file.name.toLowerCase().endsWith('.jpeg') && !file.name.toLowerCase().endsWith('.bmp')) {
+        resultDiv.innerHTML += `<div class="alert alert-warning">⏭ 不支持的文件格式: ${file.name}（仅支持 PDF/PNG/JPG/JPEG/BMP）</div>`;
         continue;
       }
 
@@ -1029,21 +1029,48 @@ async function init() {
         return;
       }
       
-      // 第二步：PDF渲染为图片，送百度OCR
-      btn.innerHTML = '渲染PDF中...';
+      // 第二步：渲染为图片（PDF或图片都转成canvas）
+      btn.innerHTML = '加载文件中...';
       var dlUrl = SUPABASE_URL + '/storage/v1/object/public/invoices/' + inv.storage_path;
       var dlRes = await fetch(dlUrl);
-      if (!dlRes.ok) throw new Error('下载PDF失败');
-      var pdfBlob = await dlRes.blob();
+      if (!dlRes.ok) throw new Error('下载文件失败');
+      var fileBlob = await dlRes.blob();
+      var ext = (inv.original_filename || '').split('.').pop().toLowerCase();
       
-      var buf = await pdfBlob.arrayBuffer();
-      var pdf = await pdfjsLib.getDocument({ data: buf }).promise;
-      var pg = await pdf.getPage(1);
-      var vp = pg.getViewport({ scale: 2.0 });
       var can = document.createElement('canvas');
-      can.width = vp.width; can.height = vp.height;
       var ctx = can.getContext('2d');
-      await pg.render({ canvasContext: ctx, viewport: vp }).promise;
+      
+      if (ext === 'pdf') {
+        btn.innerHTML = '渲染PDF中...';
+        var buf = await fileBlob.arrayBuffer();
+        var pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+        var pg = await pdf.getPage(1);
+        var vp = pg.getViewport({ scale: 2.0 });
+        can.width = vp.width; can.height = vp.height;
+        await pg.render({ canvasContext: ctx, viewport: vp }).promise;
+      } else {
+        btn.innerHTML = '加载图片中...';
+        var img = new Image();
+        var imgUrl = URL.createObjectURL(fileBlob);
+        img.src = imgUrl;
+        await new Promise(function(resolve, reject) {
+          img.onload = function() {
+            // 限制最大宽高2000px，防止图片过大导致百度OCR失败
+            var maxDim = 2000;
+            var w = img.width, h = img.height;
+            if (w > maxDim || h > maxDim) {
+              var ratio = Math.min(maxDim/w, maxDim/h);
+              w = Math.floor(w * ratio);
+              h = Math.floor(h * ratio);
+            }
+            can.width = w; can.height = h;
+            ctx.drawImage(img, 0, 0, w, h);
+            URL.revokeObjectURL(imgUrl);
+            resolve(null);
+          };
+          img.onerror = function() { URL.revokeObjectURL(imgUrl); reject(new Error('图片加载失败')); };
+        });
+      }
       
       btn.innerHTML = '百度OCR识别中...';
       var imageBase64 = can.toDataURL('image/jpeg', 0.85).split(',')[1];
