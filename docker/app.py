@@ -571,6 +571,7 @@ def admin_reset_password(user_id):
 def baidu_ocr_access_token():
     """获取百度 OCR access token"""
     if not BAIDU_API_KEY or not BAIDU_SECRET_KEY:
+        print("  [OCR] 错误: API Key 未配置")
         return None
     url = "https://aip.baidubce.com/oauth/2.0/token"
     params = {
@@ -578,10 +579,18 @@ def baidu_ocr_access_token():
         "client_id": BAIDU_API_KEY,
         "client_secret": BAIDU_SECRET_KEY
     }
-    resp = requests.get(url, params=params)
-    if resp.status_code == 200:
-        return resp.json().get("access_token")
-    return None
+    try:
+        resp = requests.get(url, params=params, timeout=10)
+        if resp.status_code == 200:
+            token = resp.json().get("access_token")
+            print(f"  [OCR] Token 获取成功")
+            return token
+        else:
+            print(f"  [OCR] Token 获取失败: HTTP {resp.status_code} - {resp.text[:200]}")
+            return None
+    except Exception as e:
+        print(f"  [OCR] Token 获取异常: {e}")
+        return None
 
 def call_baidu_ocr(image_base64, ocr_type="vat_invoice"):
     """调用百度OCR"""
@@ -718,12 +727,14 @@ def ocr_process():
     
     # 百度OCR
     if image_base64:
+        print(f"  [OCR] 收到图片数据 ({len(image_base64)} 字符)，开始调用百度OCR")
         ocr_data, err = call_baidu_ocr(image_base64, "vat_invoice")
         if err or not ocr_data:
-            # 降级到通用文字识别
+            print(f"  [OCR] 增值税发票识别失败: {err}，降级到通用文字识别")
             ocr_data, err = call_baidu_ocr(image_base64, "general")
         
         if ocr_data and not err:
+            print(f"  [OCR] 识别成功")
             parsed = parse_ocr_result(ocr_data)
             if parsed:
                 db.execute("""
