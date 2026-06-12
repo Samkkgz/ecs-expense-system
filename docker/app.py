@@ -133,12 +133,20 @@ def auth_login():
     user = db.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
     
     if not user:
-        # 自动注册（首次登录时创建账号）
+        # 自动注册（第一个注册的用户自动成为超级管理员）
+        existing_count = db.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        first_user = existing_count == 0
+        role = "super_admin" if first_user else "member"
         uid = str(uuid.uuid4())
         db.execute(
             "INSERT INTO users (id, email, name, password_hash, role, status) VALUES (?,?,?,?,?,?)",
-            (uid, email, email.split("@")[0], hash_password(password), "member", "active")
+            (uid, email, email.split("@")[0], hash_password(password), role, "active")
         )
+        db.commit()
+        session["user_id"] = uid
+        session.permanent = True
+        db.close()
+        return jsonify({"success": True, "message": f"注册成功{'（超级管理员）' if first_user else ''}", "is_new": True})
         db.commit()
         session["user_id"] = uid
         session.permanent = True
@@ -734,7 +742,13 @@ def ocr_process():
                 return jsonify({"success": True, "data": parsed})
     
     db.close()
-    return jsonify({"success": False, "error": "OCR识别失败，请手动填写"})
+    # 返回详细的错误原因
+    err_msg = "OCR识别失败"
+    if image_base64 and not BAIDU_API_KEY:
+        err_msg = "OCR暂不可用：未配置百度云API Key"
+    elif image_base64 and err:
+        err_msg = f"OCR识别失败: {err}"
+    return jsonify({"success": False, "error": err_msg})
 
 # ── 启动 ──────────────────────────────────────────────
 if __name__ == "__main__":
@@ -744,5 +758,6 @@ if __name__ == "__main__":
     init_db()
     print(f"\n  ➜ 启动地址: http://0.0.0.0:{PORT}")
     print(f"  ➜ 管理员: {ADMIN_EMAIL}")
+    print(f"  ➜ 百度OCR: {'已配置' if BAIDU_API_KEY else '未配置（手动录入可用）'}")
     print(f"═" * 40)
     app.run(host="0.0.0.0", port=PORT, debug=False)
