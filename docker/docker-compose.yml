@@ -1,0 +1,16 @@
+services:
+  ecs-expense:
+    build: .
+    container_name: ecs-expense-system
+    restart: unless-stopped
+    ports:
+      - "8888:8888"
+    environment:
+      SECRET_KEY: "ecs-expense-secret-key-change-me"
+      ADMIN_EMAIL: "admin@ecsomni.com"
+      ADMIN_PASSWORD: "admin123"
+      BAIDU_API_KEY: "8dkGx67xX1Ht1pOghMemQJJ2"
+      BAIDU_SECRET_KEY: "egp7iIvoXGQukCBz27FojvzRB0XkNObb"
+    volumes:
+      - ./data:/app/data
+      - ./config.env:/app/config.env:ro
