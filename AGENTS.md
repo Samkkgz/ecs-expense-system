@@ -1,66 +1,47 @@
-# AGENTS.md - ECS Expense System
+# ECS-Expanse-System — 开发规范
 
-## 工作流程（强制执行）
-
-每次解决问题必须按以下流程，不可跳过任何步骤：
-
-### 1. 问题全面分析
-- 收集所有错误日志（不是猜测，是实际日志）
-- 逐条分析每个错误的直接原因和根本原因
-- 梳理完整的依赖链（A依赖B依赖C...）
-- 列出所有可能受影响的服务/容器/文件
-
-### 2. 确定最优解决方案
-- 基于根因设计解决方案，不是修补症状
-- 考虑方案是否引入新依赖或新问题
-- 优先选择最简单、改动最少的方案
-- 明确列出所有需要修改的文件和理由
-
-### 3. 方案测试及验证
-- 跑 `DEPLOY_CHECKLIST.md` 中所有检查项
-- 交叉核对密码、JWT、DB连接字符串一致性
-- SQL 语法检查（BEGIN/END 平衡、$$ 配对）
-- 模拟容器启动顺序，逐容器追踪执行流程
-
-### 4. 确定解决方案（通过所有验证）
-- 所有检查项必须通过
-- 不可有 "应该能工作" 的推测——要有确定证据
-
-### 5. 提交/部署
-- 给出一条完整的部署命令（尽量一次完成）
-- 同时上传所有受影响文件
-- 包含所有前置条件（目录创建、权限设置等）
-- 部署后要求用户反馈新日志
-
-## NAS 环境约束（已知陷阱）
-
-1. DSM Container Manager 删除项目时不清除 Docker named volumes
-2. Bind mount 目录需预先存在，否则容器启动失败
-3. Bind mount 内文件属主为容器 UID，NAS 用户无法删除
-4. DSM 的 Docker Compose 版本可能不支持 `depends_on condition: service_healthy`
-5. 免密 SSH 能用 `cat | ssh "cat >"`，但 scp 不可用
-6. NAS IP: 192.168.3.150，用户: sam.lu
-
-## 文件结构
+## 项目结构（两套代码严格分离）
 
 ```
-部署包-放到NAS/
-├── docker-compose.yml   # 6容器编排
-├── nginx.conf           # 网关路由
-├── index.html           # 前端（密码登录）
-├── sql/init.sql         # 数据库初始化
-└── ocr-service/         # OCR 服务
+ECS-Expanse-System/
+│
+├── cloud/                          ← 🔵 Supabase 云版
+│   ├── index.html                  ← GitHub Pages 入口（连 Supabase Cloud）
+│   ├── schema.sql                  ← Supabase 数据库 Schema
+│   ├── seed.sql                    ← 种子数据
+│   ├── process_expenses.py         ← 报销数据处理脚本
+│   └── supabase/functions/
+│       └── process-invoice/index.ts ← Edge Function（OCR 识别）
+│
+├── nas/                            ← 🟢 NAS Docker 自托管版
+│   ├── docker-compose.yml          ← 6 容器编排（db + gateway + auth + rest + storage + ocr）
+│   ├── index.html                  ← 前端（连 NAS 本地 http://192.168.3.150:18000）
+│   ├── kong.yml                    ← Kong API 网关配置
+│   ├── nginx.conf                  ← Nginx 反向代理配置
+│   ├── sql/init.sql                ← 数据库完整初始化脚本
+│   └── ocr-service/                ← Python OCR 识别服务（替代 Supabase Edge Function）
+│       ├── Dockerfile
+│       ├── app.py
+│       └── requirements.txt
+│
+├── .gitignore / README.md / VERSIONS.md  ← 项目级文档
+├── .agents/                        ← Agent 约定（NAS 部署检查清单等）
+├── AGENTS.md                       ← 本文件（Agent 指令）
+└── 明天跑这个.txt                   ← 部署步骤备忘录
 ```
 
-## 版本记录
+## 开发 & 部署区分
 
-见 VERSIONS.md
+| 场景 | 操作哪个目录 | 部署方式 |
+|------|-------------|---------|
+| 修改云版前端 | `cloud/index.html` | git push → GitHub Pages 自动部署 |
+| 部署 Edge Function | `cloud/supabase/functions/` | `supabase functions deploy` |
+| 修改 NAS 版前端 | `nas/index.html` | 复制到 NAS → `docker compose up -d` |
+| 修改 NAS 容器配置 | `nas/docker-compose.yml` | 同上 |
+| 修改 NAS 版 OCR | `nas/ocr-service/` | 同上 |
 
-## 代码修改原则（严格遵守）
-
-每次对代码的修改只修改必要的部分，不涉及的部分不允许做改动。
-在修改任何文件之前，必须先确认：
-1. 这个改动是否直接解决问题？
-2. 这个改动是否会影响其他功能？
-3. 是否有更小范围的改动方案？
-如果答案是否定的，不要改。
+## 禁止行为
+- 不在 `cloud/` 中存放 NAS 相关代码
+- 不在 `nas/` 中存放 Supabase 云服务相关代码
+- 修改云版时不影响 NAS 版，反之亦然
+- `.env` 文件不提交 git（已由 .gitignore 排除）

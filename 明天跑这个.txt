@@ -2,40 +2,28 @@
 📋 ECS 报销管理系统 - 部署步骤
 ==========================================
 
-第1步：推送代码到 GitHub
---------------------------------------------------
-cd "/Users/sam.lu/Documents/Business Related/Business System Development Projects/ECS-Expanse-System" && git push origin main
+【两套代码区分】
+  cloud/  → Supabase 云版（GitHub Pages + Supabase 云服务）
+  nas/    → NAS Docker 自托管版（本地部署到群晖）
 
-第2步（可选）：部署 Edge Function
+第1步：推送云版代码到 GitHub
 --------------------------------------------------
-cd "/Users/sam.lu/Documents/Business Related/Business System Development Projects/ECS-Expanse-System" && supabase functions deploy process-invoice --no-verify-jwt
+cd "/Users/sam.lu/Documents/Business Related/Business System Development Projects/ECS-Expanse-System"
+git push origin main
 
-第3步（可选）：设置 Webhook 自动识别
+第2步（可选）：部署 Edge Function（云版）
 --------------------------------------------------
-Supabase Dashboard → Database → Webhooks → 创建：
-- Name: ocr-on-insert
-- Table: invoices → Insert 事件
-- Type: Supabase Edge Function → process-invoice
+cd cloud && supabase functions deploy process-invoice --no-verify-jwt
 
-==========================================
-测试地址：https://samkkgz.github.io/ecs-expense-system/
-推送后等2分钟部署完成，Ctrl+F5 强制刷新
-==========================================
-
-第4步（可选）：NAS 自托管部署
+第3步（可选）：NAS 自托管部署
 --------------------------------------------------
-将 nas-deploy/ 整个目录复制到 NAS，然后：
-cd /path/to/ecs-supabase-nas
+将 nas/ 整个目录复制到 NAS，然后：
+cd /path/to/nas
 docker compose up -d
 
-等待 2-3 分钟，所有服务会自动启动：
-- PostgreSQL 数据库
-- GoTrue 认证 (Magic Link)
-- PostgREST REST API
-- Kong API 网关 (端口 8000)
-- Storage 文件存储
-- OCR 识别服务 (等同于 Edge Function)
-- Supabase Studio (端口 8080)
-- 报表自动刷新 (每天凌晨)
+前端访问：nas/index.html 已配置 SUPABASE_URL = http://192.168.3.150:18000
 
-前端访问：修改 index.html 中的 SUPABASE_URL 为 http://192.168.3.150:8000
+==========================================
+云版测试：https://samkkgz.github.io/ecs-expense-system/
+推送后等2分钟部署完成，Ctrl+F5 强制刷新
+==========================================
