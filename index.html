@@ -79,6 +79,7 @@
     
     /* Report section */
     .report-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .export-item:hover { background: #f0f2f5; }
     
     /* Badge */
     .section-card { padding-top: 16px; }
@@ -181,13 +182,13 @@
         <div class="row g-3">
           <div class="col-md-8">
             <div class="section-card">
-              <h5>月度支出趋势</h5>
+              <h5>月度类目支出（堆叠图）</h5>
               <canvas id="monthlyChart" height="250"></canvas>
             </div>
           </div>
           <div class="col-md-4">
             <div class="section-card">
-              <h5>类目分布</h5>
+              <h5>月度支出趋势（面积图）</h5>
               <canvas id="categoryChart" height="250"></canvas>
             </div>
           </div>
@@ -244,12 +245,19 @@
             <select id="filterStatus"><option value="">全部状态</option><option value="pending">待审核</option><option value="approved">已通过</option><option value="rejected">已驳回</option></select>
             <input type="text" id="filterSearch" placeholder="🔍 搜索发票号码/商家..." style="flex:1;min-width:150px">
             <button class="btn btn-sm btn-outline-danger" onclick="cleanupDuplicates()" title="删除重复发票"><i class="bi bi-eraser"></i> 清理重复</button>
-            <button class="btn btn-outline-primary btn-sm" onclick="exportInvoices()"><i class="bi bi-download"></i> 导出Excel</button>
+            <div class="export-dropdown" style="position:relative;display:inline-block">
+            <button class="btn btn-outline-primary btn-sm" onclick="toggleExportMenu(event)"><i class="bi bi-download"></i> 导出 ▾</button>
+            <div class="export-menu" style="display:none;position:absolute;right:0;top:100%;z-index:999;background:#fff;border:1px solid #ddd;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.12);min-width:180px;padding:4px 0">
+              <a class="export-item" href="#" onclick="exportInvoices();closeExportMenu();return false" style="display:block;padding:8px 16px;color:#333;text-decoration:none;font-size:13px"><i class="bi bi-file-earmark-excel"></i> 导出统计报表 (Excel)</a>
+              <a class="export-item" href="#" onclick="exportOriginalsZip();closeExportMenu();return false" style="display:block;padding:8px 16px;color:#333;text-decoration:none;font-size:13px"><i class="bi bi-file-zip"></i> 导出选中原件 (ZIP)</a>
+            </div>
+          </div>
+          <span id="selectedCount" style="font-size:12px;color:#667eea;display:none;margin-left:4px;white-space:nowrap"></span>
           </div>
           <div class="table-responsive">
             <table class="table table-hover">
               <thead><tr>
-                <th>发票号码</th><th>日期</th><th>商家</th><th>金额</th><th>类目</th><th>状态</th><th>操作</th>
+                <th style="width:36px"><input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll()" title="全选"></th><th>发票号码</th><th>日期</th><th>商家</th><th>金额</th><th>类目</th><th>状态</th><th>操作</th>
               </tr></thead>
               <tbody id="invoiceTableBody"></tbody>
             </table>
@@ -342,6 +350,20 @@
   // ============================================================
   // 初始化
   // ============================================================
+  // 导出下拉菜单切换
+  function toggleExportMenu(e) {
+    e.stopPropagation();
+    var menu = document.querySelector('.export-menu');
+    if (menu) menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+  }
+  function closeExportMenu() {
+    var menu = document.querySelector('.export-menu');
+    if (menu) menu.style.display = 'none';
+  }
+  document.addEventListener('click', function(e) {
+    if (!e.target.closest('.export-dropdown')) closeExportMenu();
+  });
+
   document.addEventListener('DOMContentLoaded', init);
 
   function closeModal() {
@@ -644,22 +666,23 @@ async function init() {
       const qTotal = qInvoices.reduce((s, i) => s + parseFloat(i.total_amount || 0), 0);
       document.getElementById('dashQuarterly').textContent = `¥${qTotal.toFixed(2)}`;
 
-      // Monthly trend chart
+      // Monthly-by-category breakdown for stacked bar + area chart
       const monthlyTotals = Array(12).fill(0);
+      const monthlyByCategory = Array(12).fill(null).map(() => ({}));
       annualInvoices.forEach(inv => {
         if (inv.invoice_date) {
           const m = parseInt(inv.invoice_date.split('-')[1]) - 1;
-          monthlyTotals[m] += parseFloat(inv.total_amount || 0);
+          const amt = parseFloat(inv.total_amount || 0);
+          monthlyTotals[m] += amt;
+          monthlyByCategory[m][inv.category_id] = (monthlyByCategory[m][inv.category_id] || 0) + amt;
         }
       });
-      renderMonthlyChart(monthlyTotals, year);
-
-      // Category distribution chart
-      const catTotals = {};
+      var catTotals = {};
       annualInvoices.forEach(inv => {
         catTotals[inv.category_id] = (catTotals[inv.category_id] || 0) + parseFloat(inv.total_amount || 0);
       });
-      renderCategoryChart(catTotals);
+      renderMonthlyChart(monthlyByCategory, catTotals, year);
+      renderCategoryChart(monthlyByCategory, catTotals, year);
 
       // Quarterly cards
       const quarters = [1,2,3,4];
@@ -702,79 +725,178 @@ async function init() {
     }
   }
 
-  function renderMonthlyChart(data, year) {
+  function renderMonthlyChart(monthlyByCategory, catTotals, year) {
     var canvas = document.getElementById('monthlyChart');
     var ctx = canvas.getContext('2d');
     var W = canvas.width = canvas.parentElement.clientWidth;
     var H = canvas.height = 250;
     ctx.clearRect(0,0,W,H);
-    var max = Math.max(...data, 1);
-    var pad = {t:20,b:30,l:50,r:20};
+    
+    // Sort categories by total amount, take top 8, group rest as "其他"
+    var catEntries = Object.entries(catTotals).sort(function(a,b){return b[1]-a[1];});
+    var topCats = catEntries.slice(0, 7);
+    var otherTotal = catEntries.slice(7).reduce(function(s,e){return s+e[1];},0);
+    if (otherTotal > 0) topCats.push(['__other__', otherTotal]);
+    
+    // Compute monthly max (sum of all categories per month)
+    var monthlySums = Array(12).fill(0);
+    monthlyByCategory.forEach(function(mc, i){
+      monthlySums[i] = Object.values(mc).reduce(function(s,v){return s+v;},0);
+    });
+    var globalMax = Math.max.apply(null, monthlySums.concat([1]));
+    
+    var pad = {t:20,b:30,l:60,r:20};
     var cw = (W-pad.l-pad.r)/12;
-    var colors = ['rgba(102,126,234,0.7)','rgba(118,75,162,0.7)'];
-    data.forEach(function(v,i){
+    var colors = ['#667eea','#764ba2','#f093fb','#4facfe','#43e97b','#fa709a','#a18cd1','#fbc2eb'];
+    
+    // Draw stacked bars
+    for (var i = 0; i < 12; i++) {
       var x = pad.l + i*cw + 2;
-      var y = pad.t + (H-pad.t-pad.b)*(1 - v/max);
-      var h = (H-pad.t-pad.b)*(v/max);
-      ctx.fillStyle = colors[i%2];
-      ctx.beginPath();
-      ctx.roundRect(x, y, cw-4, Math.max(h,2), 4);
-      ctx.fill();
+      var stackY = pad.t + (H-pad.t-pad.b);
+      var monthData = monthlyByCategory[i] || {};
+      
+      topCats.forEach(function(entry, ci){
+        var catId = entry[0];
+        var amt = catId === '__other__' ? Object.entries(monthData).reduce(function(s, e){
+          var isTop = topCats.slice(0, -1).some(function(t){return t[0] == e[0];});
+          return s + (isTop ? 0 : e[1]);
+        }, 0) : (monthData[catId] || 0);
+        
+        var h = (H-pad.t-pad.b)*(amt/globalMax);
+        if (h < 0.5) return;
+        ctx.fillStyle = colors[ci % colors.length];
+        ctx.beginPath();
+        ctx.roundRect(x, stackY - h, cw-4, h, ci === 0 ? [3,3,0,0] : ci === topCats.length-1 ? [0,0,3,3] : [0,0,0,0]);
+        ctx.fill();
+        stackY -= h;
+      });
+      
+      // Month label
       ctx.fillStyle = '#666';
       ctx.font = '10px sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText(['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'][i], x+cw/2-2, H-5);
-      if(v > 0) {
-        ctx.fillStyle = '#333';
-        ctx.font = '11px sans-serif';
-        ctx.fillText('¥'+v.toFixed(0), x+cw/2-2, y-5);
-      }
-    });
+    }
+    
     // Y axis labels
     ctx.fillStyle = '#999';
     ctx.font = '11px sans-serif';
     ctx.textAlign = 'right';
-    for(var i=0;i<=4;i++) {
-      var y = pad.t + (H-pad.t-pad.b)*(1-i/4);
-      ctx.fillText('¥'+(max*i/4).toFixed(0), pad.l-5, y+4);
+    for (var j = 0; j <= 4; j++) {
+      var yv = globalMax*j/4;
+      var yPos = pad.t + (H-pad.t-pad.b)*(1-j/4);
+      ctx.fillText('¥'+yv.toFixed(0), pad.l-5, yPos+4);
     }
+    
+    // Legend below chart (compact)
+    var lx = pad.l;
+    var ly = H - 12;
+    topCats.slice(0, 7).forEach(function(entry, ci){
+      var name = entry[0] === '__other__' ? '其他' : (categories.find(function(c){return c.id==entry[0];}) || {}).name || '类目#'+entry[0];
+      ctx.fillStyle = colors[ci % colors.length];
+      ctx.fillRect(lx, ly, 8, 8);
+      ctx.fillStyle = '#555';
+      ctx.font = '10px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText(name, lx+10, ly+8);
+      lx += ctx.measureText(name).width + 22;
+    });
   }
 
-  function renderCategoryChart(catTotals) {
+  function renderCategoryChart(monthlyByCategory, catTotals, year) {
     var canvas = document.getElementById('categoryChart');
     var ctx = canvas.getContext('2d');
     var W = canvas.width = canvas.parentElement.clientWidth;
     var H = canvas.height = 250;
     ctx.clearRect(0,0,W,H);
-    var entries = Object.entries(catTotals);
-    if(!entries.length) return;
-    var total = entries.reduce(function(s,e){return s+e[1];},0);
+
+    // 排序类目前7个，其余合并为"其他"
+    var catEntries = Object.entries(catTotals).sort(function(a,b){return b[1]-a[1];});
+    var topCats = catEntries.slice(0, 7);
+    var otherTotal = catEntries.slice(7).reduce(function(s,e){return s+e[1];},0);
+    if (otherTotal > 0) topCats.push(['__other__', otherTotal]);
+
+    // 每月总和
+    var monthlySums = Array(12).fill(0);
+    monthlyByCategory.forEach(function(mc,i){monthlySums[i]=Object.values(mc).reduce(function(s,v){return s+v;},0);});
+    var globalMax = Math.max.apply(null, monthlySums.concat([1]));
+
+    var pad = {t:20,b:30,l:60,r:12};
+    var cw = (W-pad.l-pad.r)/11;
     var colors = ['#667eea','#764ba2','#f093fb','#4facfe','#43e97b','#fa709a','#a18cd1','#fbc2eb'];
-    var cx = W*0.35, cy = H/2, r = Math.min(W*0.25, H*0.35);
-    var startAngle = -Math.PI/2;
-    entries.forEach(function(e,i){
-      var angle = (e[1]/total)*2*Math.PI;
-      ctx.fillStyle = colors[i%colors.length];
-      ctx.beginPath();
-      ctx.moveTo(cx,cy);
-      ctx.arc(cx,cy,r,startAngle,startAngle+angle);
-      ctx.closePath();
-      ctx.fill();
-      startAngle += angle;
+    var labels = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+
+    // 计算每个类目每月值
+    var series = topCats.map(function(entry, ci){
+      return monthlyByCategory.map(function(mc){
+        var catId = entry[0];
+        if (catId === '__other__') {
+          return Object.entries(mc).reduce(function(s,e){
+            var isTop = topCats.slice(0,-1).some(function(t){return t[0]==e[0];});
+            return s+(isTop?0:e[1]);
+          },0);
+        }
+        return mc[catId]||0;
+      });
     });
-    // Legend
-    var ly = 20;
-    entries.forEach(function(e,i){
-      var cat = categories.find(function(c){return c.id==e[0];});
-      var name = cat ? cat.name : '类目#'+e[0];
-      var x = W*0.55;
-      ctx.fillStyle = colors[i%colors.length];
-      ctx.fillRect(x, ly, 12, 12);
-      ctx.fillStyle = '#333';
-      ctx.font = '12px sans-serif';
+
+    // 反向绘制：从底层到顶层
+    for (var ci = series.length-1; ci >= 0; ci--) {
+      var vals = series[ci];
+      
+      // 绘制面积（polygon: baseline → curve → previous top → close）
+      ctx.beginPath();
+      ctx.moveTo(pad.l, H-pad.b);
+      for (var i = 0; i < 12; i++) {
+        var x = pad.l + i*cw;
+        var cumY = 0;
+        for (var k = 0; k <= ci; k++) cumY += series[k][i];
+        var y = pad.t + (H-pad.t-pad.b)*(1-cumY/globalMax);
+        if (i === 0) ctx.lineTo(x, y);
+        else {
+          var px = pad.l + (i-1)*cw;
+          var prevCumY = 0;
+          for (var k = 0; k <= ci; k++) prevCumY += series[k][i-1];
+          var py = pad.t + (H-pad.t-pad.b)*(1-prevCumY/globalMax);
+          var cpx = (px+x)/2;
+          ctx.bezierCurveTo(cpx, py, cpx, y, x, y);
+        }
+      }
+      ctx.lineTo(pad.l+11*cw, H-pad.b);
+      ctx.closePath();
+      ctx.fillStyle = colors[ci%colors.length];
+      ctx.globalAlpha = 0.6;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
+    // X 轴标签
+    ctx.fillStyle = '#666';
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'center';
+    labels.forEach(function(l,i){ctx.fillText(l, pad.l+i*cw, H-4);});
+
+    // Y 轴
+    ctx.fillStyle = '#999';
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'right';
+    for (var j = 0; j <= 4; j++) {
+      var yv = globalMax*j/4;
+      var yPos = pad.t + (H-pad.t-pad.b)*(1-j/4);
+      ctx.fillText('¥'+yv.toFixed(0), pad.l-5, yPos+4);
+    }
+
+    // 图例
+    var lx = pad.l, ly = H-12;
+    topCats.slice(0,7).forEach(function(entry,ci){
+      var name = entry[0]==='__other__'?'其他':(categories.find(function(c){return c.id==entry[0];})||{}).name||'类目#'+entry[0];
+      ctx.fillStyle = colors[ci%colors.length];
+      ctx.fillRect(lx, ly, 8, 8);
+      ctx.fillStyle = '#555';
+      ctx.font = '10px sans-serif';
       ctx.textAlign = 'left';
-      ctx.fillText(name + '  ¥'+(e[1]).toFixed(2), x+18, ly+11);
-      ly += 24;
+      ctx.fillText(name, lx+10, ly+8);
+      lx += ctx.measureText(name).width+22;
     });
   }
 
@@ -803,12 +925,21 @@ async function init() {
     const location = document.getElementById('uploadLocation').value;
     const [year, mon] = month.split('-');
 
+    var seenInBatch = {};
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       if (!file.name.toLowerCase().endsWith('.pdf') && !file.name.toLowerCase().endsWith('.png') && !file.name.toLowerCase().endsWith('.jpg') && !file.name.toLowerCase().endsWith('.jpeg') && !file.name.toLowerCase().endsWith('.bmp')) {
         resultDiv.innerHTML += `<div class="alert alert-warning">⏭ 不支持的文件格式: ${file.name}（仅支持 PDF/PNG/JPG/JPEG/BMP）</div>`;
         continue;
       }
+
+      // 批次内去重：同一批次中同名同大小文件只上传一次
+      var batchKey = file.name + '_' + file.size;
+      if (seenInBatch[batchKey]) {
+        resultDiv.innerHTML += `<div class="alert alert-info">⏭ 已跳过本次重复文件: ${file.name}</div>`;
+        continue;
+      }
+      seenInBatch[batchKey] = true;
 
       // 去重检查：同名同大小的文件视为重复（防止重复上传）
       var { data: dupes } = await sb.from('invoices').select('id').eq('original_filename', file.name).eq('file_size', file.size).limit(1);
@@ -888,6 +1019,7 @@ async function init() {
   // INVOICES
   // ============================================================
   let allInvoices = [];
+  let selectedInvoices = new Set();
 
   async function loadInvoices() {
     const filterMonth = document.getElementById('filterMonth').value;
@@ -903,7 +1035,9 @@ async function init() {
     }
     
     if (filterMonth) {
-      query = query.gte('invoice_date', `${filterMonth}-01`).lte('invoice_date', `${filterMonth}-31`);
+      var fmParts = filterMonth.split('-');
+      var fmLastDay = new Date(parseInt(fmParts[0]), parseInt(fmParts[1]), 0).getDate();
+      query = query.gte('invoice_date', `${filterMonth}-01`).lte('invoice_date', `${filterMonth}-${String(fmLastDay).padStart(2,'0')}`);
     }
     if (filterCategory) query = query.eq('category_id', filterCategory);
     if (filterStatus) query = query.eq('status', filterStatus);
@@ -914,7 +1048,7 @@ async function init() {
     const { data, count, error } = await query;
     
     if (error) {
-      document.getElementById('invoiceTableBody').innerHTML = `<tr><td colspan="7" class="text-danger">${error.message}</td></tr>`;
+      document.getElementById('invoiceTableBody').innerHTML = `<tr><td colspan="8" class="text-danger">${error.message}</td></tr>`;
       return;
     }
 
@@ -941,13 +1075,15 @@ async function init() {
     // Render table
     const tbody = document.getElementById('invoiceTableBody');
     if (pageData.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">暂无发票记录</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">暂无发票记录</td></tr>';
     } else {
       tbody.innerHTML = pageData.map(inv => {
         const cat = categories.find(c => c.id === inv.category_id);
         const statusBadge = inv.status === 'approved' ? 'badge-approved' : inv.status === 'rejected' ? 'bg-danger' : 'badge-pending';
         const statusText = inv.status === 'approved' ? '已通过' : inv.status === 'rejected' ? '已驳回' : '待审核';
+        var checked = selectedInvoices.has(inv.id) ? ' checked' : '';
         return `<tr>
+          <td><input type="checkbox" class="inv-checkbox" data-id="${inv.id}" onchange="toggleSelect(${inv.id},this.checked)"${checked}></td>
           <td><small>${inv.invoice_number || '-'}</small></td>
           <td><small>${inv.invoice_date || '-'}</small></td>
           <td><small>${inv.seller_name ? inv.seller_name.substring(0, 20) : '-'}</small></td>
@@ -961,6 +1097,10 @@ async function init() {
           </td>
         </tr>`;
       }).join('');
+      // 刷新全选框状态
+      var scb = document.getElementById('selectAllCheckbox');
+      if (scb) scb.checked = false;
+      updateSelectedCount();
     }
 
     // Pagination
@@ -973,6 +1113,127 @@ async function init() {
           <a class="page-link" href="#" onclick="currentPageNum=${i+1};loadInvoices();return false">${i+1}</a>
         </li>`
       ).join('');
+    }
+  }
+
+
+  // ============================================================
+  // 多选功能
+  // ============================================================
+  function toggleSelectAll() {
+    var cb = document.getElementById('selectAllCheckbox');
+    if (!cb) return;
+    var checked = cb.checked;
+    var checkboxes = document.querySelectorAll('.inv-checkbox');
+    for (var i = 0; i < checkboxes.length; i++) {
+      checkboxes[i].checked = checked;
+      var id = parseInt(checkboxes[i].getAttribute('data-id'));
+      if (!isNaN(id)) {
+        if (checked) selectedInvoices.add(id);
+        else selectedInvoices.delete(id);
+      }
+    }
+    updateSelectedCount();
+  }
+
+  function toggleSelect(id, checked) {
+    if (checked) selectedInvoices.add(id);
+    else selectedInvoices.delete(id);
+    updateSelectedCount();
+    // sync全选框
+    var allCbs = document.querySelectorAll('.inv-checkbox');
+    var allChecked = allCbs.length > 0;
+    for (var i = 0; i < allCbs.length; i++) {
+      if (!allCbs[i].checked) { allChecked = false; break; }
+    }
+    var scb = document.getElementById('selectAllCheckbox');
+    if (scb) scb.checked = allChecked;
+  }
+
+  function updateSelectedCount() {
+    var el = document.getElementById('selectedCount');
+    if (!el) return;
+    var cnt = selectedInvoices.size;
+    if (cnt > 0) {
+      el.style.display = 'inline';
+      el.textContent = '已选 ' + cnt + ' 项';
+    } else {
+      el.style.display = 'none';
+    }
+  }
+
+  // ============================================================
+  // 导出选中发票原件为 ZIP
+  // ============================================================
+  async function exportOriginalsZip() {
+    var ids = Array.from(selectedInvoices);
+    if (ids.length === 0) {
+      showToast('请先在列表中勾选要导出的发票', 'warning');
+      return;
+    }
+    showToast('正在下载 ' + ids.length + ' 个文件并打包...', 'info');
+    
+    try {
+      var zip = new JSZip();
+      var { data: { session } } = await sb.auth.getSession();
+      var token = session ? session.access_token : SUPABASE_ANON_KEY;
+      
+      var downloaded = 0;
+      var failed = [];
+      
+      for (var invId of ids) {
+        var inv = allInvoices.find(function(i){return i.id === invId;});
+        if (!inv || !inv.storage_path) { failed.push('#'+invId+' (无路径)'); continue; }
+        
+        try {
+          var dlUrl = SUPABASE_URL + '/storage/v1/object/invoices/' + inv.storage_path;
+          var res = await fetch(dlUrl, {
+            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + token }
+          });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          
+          var blob = await res.blob();
+          // 使用原始文件名或生成一个
+          var fname = inv.original_filename || (inv.invoice_number || 'invoice') + '_' + inv.id;
+          // 避免同名文件冲突
+          var base = fname.replace(/\.[^.]+$/, '');
+          var ext = fname.split('.').pop().toLowerCase();
+          if (!['pdf','png','jpg','jpeg','bmp'].includes(ext)) ext = 'pdf';
+          var zipName = base + '.' + ext;
+          // 重名处理
+          var counter = 1;
+          while (zip.file(zipName)) {
+            zipName = base + '_(' + counter + ').' + ext;
+            counter++;
+          }
+          zip.file(zipName, blob, { binary: true });
+          downloaded++;
+        } catch(e) {
+          failed.push((inv.original_filename || inv.invoice_number || '#'+invId) + ': ' + e.message);
+        }
+      }
+      
+      if (downloaded === 0) {
+        showToast('下载失败，请检查网络或权限', 'danger');
+        return;
+      }
+      
+      // 生成 ZIP 并触发下载
+      var zipBlob = await zip.generateAsync({ type: 'blob' });
+      var url = URL.createObjectURL(zipBlob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = 'ECS发票原件_' + new Date().toISOString().slice(0,10) + '.zip';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      
+      var msg = '✅ 已打包 ' + downloaded + ' 个文件';
+      if (failed.length > 0) msg += '，' + failed.length + ' 个失败';
+      showToast(msg, downloaded === ids.length ? 'success' : 'warning');
+    } catch(e) {
+      showToast('打包失败: ' + e.message, 'danger');
     }
   }
 
@@ -1882,11 +2143,13 @@ async function init() {
     
     // 加载各用户统计
     var currentYear = new Date().getFullYear();
-    var { data: allInvs } = await sb.from('invoices').select('uploaded_by, total_amount, status, invoice_date')
-      .gte('invoice_date', currentYear + '-01-01')
-      .lte('invoice_date', currentYear + '-12-31');
+    var { data: allInvs, error: allInvsErr } = await sb.from('invoices').select('uploaded_by, total_amount, status')
+      .gte('created_at', currentYear + '-01-01')
+      .lte('created_at', currentYear + '-12-31');
     
-    if (allInvs && allInvs.length > 0) {
+    if (allInvsErr) {
+      document.getElementById('adminStatsPerUser').innerHTML = '<p class="text-danger">查询失败: ' + allInvsErr.message + '</p>';
+    } else if (allInvs && allInvs.length > 0) {
       var userStats = {};
       allInvs.forEach(function(inv) {
         if (!userStats[inv.uploaded_by]) {
@@ -1914,6 +2177,8 @@ async function init() {
         var el = document.getElementById('adminStatsPerUser');
         if (el) el.innerHTML = statsHtml;
       }, 100);
+    } else {
+      document.getElementById('adminStatsPerUser').innerHTML = '<p class="text-muted">本年度暂无发票数据</p>';
     }
   }
 
@@ -1951,6 +2216,7 @@ async function init() {
   </script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js" defer></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
 </body>
 </html>

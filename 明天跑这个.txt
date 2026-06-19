@@ -4,11 +4,11 @@
 
 第1步：推送代码到 GitHub
 --------------------------------------------------
-cd "/Users/sam.lu/Documents/Business Related/Finance/Expenses/ECS  Expanses/ecs-expense-system" && git push origin main
+cd "/Users/sam.lu/Documents/Business Related/Business System Development Projects/ECS-Expanse-System" && git push origin main
 
 第2步（可选）：部署 Edge Function
 --------------------------------------------------
-cd "/Users/sam.lu/Documents/Business Related/Finance/Expenses/ECS  Expanses/ecs-expense-system" && supabase functions deploy process-invoice --no-verify-jwt
+cd "/Users/sam.lu/Documents/Business Related/Business System Development Projects/ECS-Expanse-System" && supabase functions deploy process-invoice --no-verify-jwt
 
 第3步（可选）：设置 Webhook 自动识别
 --------------------------------------------------
@@ -21,3 +21,21 @@ Supabase Dashboard → Database → Webhooks → 创建：
 测试地址：https://samkkgz.github.io/ecs-expense-system/
 推送后等2分钟部署完成，Ctrl+F5 强制刷新
 ==========================================
+
+第4步（可选）：NAS 自托管部署
+--------------------------------------------------
+将 nas-deploy/ 整个目录复制到 NAS，然后：
+cd /path/to/ecs-supabase-nas
+docker compose up -d
+
+等待 2-3 分钟，所有服务会自动启动：
+- PostgreSQL 数据库
+- GoTrue 认证 (Magic Link)
+- PostgREST REST API
+- Kong API 网关 (端口 8000)
+- Storage 文件存储
+- OCR 识别服务 (等同于 Edge Function)
+- Supabase Studio (端口 8080)
+- 报表自动刷新 (每天凌晨)
+
+前端访问：修改 index.html 中的 SUPABASE_URL 为 http://192.168.3.150:8000

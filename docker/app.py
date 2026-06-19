@@ -257,22 +257,37 @@ def list_invoices():
 def create_invoice():
     data = request.get_json() or {}
     storage_path = data.get("storage_path")
+    original_filename = data.get("original_filename", "")
+    file_size = data.get("file_size", 0)
+    
     if not storage_path:
         return jsonify({"error": "缺少 storage_path"}), 400
     
     db = get_db()
+    
+    # 去重检查：同名+同大小视为重复
+    if original_filename and file_size:
+        dup = db.execute(
+            "SELECT id FROM invoices WHERE original_filename=? AND file_size=? LIMIT 1",
+            (original_filename, file_size)
+        ).fetchone()
+        if dup:
+            db.close()
+            return jsonify({"error": "重复文件", "message": "文件已存在"}), 409
+    
     db.execute("""
         INSERT INTO invoices (storage_path, original_filename, file_size, category_id,
-            project_location, uploaded_by, status)
-        VALUES (?,?,?,?,?,?,?)
+            project_location, uploaded_by, status, invoice_date, created_at)
+        VALUES (?,?,?,?,?,?,?,?,datetime('now','localtime'))
     """, (
         storage_path,
-        data.get("original_filename", ""),
-        data.get("file_size", 0),
+        original_filename,
+        file_size,
         data.get("category_id"),
         data.get("project_location"),
         current_user_id(),
-        "pending"
+        "pending",
+        data.get("invoice_date")
     ))
     db.commit()
     invoice_id = db.execute("SELECT last_insert_rowid()").fetchone()[0]
@@ -621,11 +636,74 @@ def extract_pdf_text(filepath):
             for page in pdf.pages[:5]:
                 t = page.extract_text() or ""
                 text += t + "\n"
-            return text.strip() if len(text.strip()) > 5 else None
+            text = text.strip()
+            if len(text) > 5:
+                # CID编码检测：如果包含(cid:，说明是编码字体，文字无法正常提取
+                if text.count("(cid:") > 3:
+                    return None  # 触发前端使用图片识别
+                return text
+            return None
     except ImportError:
         return None
     except Exception:
         return None
+
+
+def auto_categorize(db, invoice_id, seller_name, item_desc, project_location):
+    """自动识别费用类目和地点（对标 Supabase Edge Function）"""
+    s = (seller_name or "").lower()
+    i = (item_desc or "").lower()
+    
+    # 从商家名称中检测城市
+    seller_city = detect_city(seller_name)
+    desc_city = detect_city(item_desc)
+    city = seller_city or desc_city or project_location
+    
+    # 确定是否为出差（非广州）
+    is_out_of_town = city and city != "广州"
+    
+    cat_name = None
+    
+    # 交通类
+    if any(kw in i for kw in ["铁路", "高铁", "航空", "机票", "火车"]) or any(kw in s for kw in ["航空", "铁路"]):
+        cat_name = "出差交通费"
+    # 加油类
+    elif any(kw in s for kw in ["油", "石油", "石化", "加油站"]):
+        cat_name = "出差交通费"
+    # 住宿类（必须在餐饮类之前，避免"酒店"被"酒"误匹配）
+    elif any(kw in s for kw in ["酒店", "宾馆", "住宿", "旅店", "民宿"]):
+        cat_name = "出差住房费"
+    # 餐饮类
+    elif any(kw in s for kw in ["餐饮", "餐厅", "饭", "酒", "茶", "咖啡", "烘焙", "面包", "甜品"]):
+        if any(kw in i for kw in ["客情", "招待", "客户"]):
+            cat_name = "客情餐饮费"
+        else:
+            cat_name = "出差餐饮费" if is_out_of_town else "日常餐饮费"
+    # 通讯类
+    elif any(kw in s for kw in ["通讯", "通信", "移动", "联通", "电信"]):
+        cat_name = "通讯费"
+    # 办公用品
+    elif any(kw in s for kw in ["文具", "办公", "打印", "墨盒", "纸张"]):
+        cat_name = "办公用品"
+    
+    updates = {}
+    if city and (not project_location or project_location.strip() == ""):
+        updates["project_location"] = city
+    
+    if cat_name:
+        row = db.execute("SELECT id FROM expense_categories WHERE name=?", (cat_name,)).fetchone()
+        if row:
+            updates["category_id"] = row["id"]
+    
+    if updates:
+        set_clauses = ", ".join(f"{k}=?" for k in updates.keys())
+        values = list(updates.values()) + [invoice_id]
+        db.execute(f"UPDATE invoices SET {set_clauses} WHERE id=?", values)
+        db.commit()
+        print(f"  [分类] 自动设置: {updates}")
+    
+    return updates
+
 
 def parse_ocr_result(ocr_data):
     """解析OCR返回的结构化数据"""
@@ -633,13 +711,30 @@ def parse_ocr_result(ocr_data):
     if not ocr_data:
         return result
     
-    words = ocr_data.get("words_result", [])
-    text = " ".join(w.get("words", "") for w in words)
+    # 兼容不同格式：dict / 字符串
+    if isinstance(ocr_data, str):
+        text = ocr_data
+    else:
+        raw = ocr_data.get("words_result", [])
+        if isinstance(raw, dict):
+            # 增值税发票接口返回 dict，直接拼接所有文本
+            parts = []
+            for v in raw.values():
+                if isinstance(v, dict): parts.append(v.get("words", ""))
+                elif isinstance(v, str): parts.append(v)
+            text = " ".join(parts)
+        else:
+            # 通用文字识别返回 list
+            text = " ".join(w.get("words", "") for w in raw) if raw else ""
     text = re.sub(r"\s+", "", text)
     
     # 发票号码
     m = re.search(r"(?:发票|号码|票号)\s*[：:]*\s*(\d{8,25})", text)
     if m: result["invoice_number"] = m.group(1)
+    # 备用：直接匹配8位以上纯数字（增值税发票格式）
+    if not result.get("invoice_number"):
+        m2 = re.search(r"(\d{10,20})", text)
+        if m2: result["invoice_number"] = m2.group(1)
     
     # 日期
     m = re.search(r"(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日", text)
@@ -707,25 +802,31 @@ def ocr_process():
             text = extract_pdf_text(filepath)
             if text:
                 parsed = parse_ocr_result({"words_result": [{"words": text}]})
-                if parsed:
-                    db.execute("""
-                        UPDATE invoices SET invoice_number=?, invoice_date=?, seller_name=?,
-                        total_amount=?, project_location=?, raw_ocr_text=?, status='pending'
-                        WHERE id=?
-                    """, (
-                        parsed.get("invoice_number", ""),
-                        parsed.get("invoice_date", ""),
-                        parsed.get("seller_name", ""),
-                        parsed.get("total_amount", 0),
-                        parsed.get("project_location", ""),
-                        text[:500],
-                        invoice_id
-                    ))
-                    db.commit()
-                    db.close()
-                    return jsonify({"success": True, "data": parsed})
+                updates = {
+                    "invoice_number": parsed.get("invoice_number", ""),
+                    "invoice_date": parsed.get("invoice_date", ""),
+                    "seller_name": parsed.get("seller_name", ""),
+                    "total_amount": parsed.get("total_amount", 0),
+                    "project_location": parsed.get("project_location", ""),
+                    "raw_ocr_text": text[:500],
+                    "status": "pending"
+                }
+                db.execute("""
+                    UPDATE invoices SET invoice_number=?, invoice_date=?, seller_name=?,
+                    total_amount=?, project_location=?, raw_ocr_text=?, status='pending'
+                    WHERE id=?
+                """, (updates["invoice_number"], updates["invoice_date"], updates["seller_name"],
+                      updates["total_amount"], updates["project_location"], updates["raw_ocr_text"], invoice_id))
+                db.commit()
+                print(f"  [OCR] PDF提取: {updates}")
+                # 自动分类
+                auto_categorize(db, invoice_id, updates.get("seller_name", ""), "", updates.get("project_location", ""))
+                db.close()
+                return jsonify({"success": True, "data": updates})
+            else:
+                db.close()
+                return jsonify({"success": False, "error": "无法提取PDF文字，请使用图片识别", "need_image": True})
     
-    # 百度OCR
     if image_base64:
         print(f"  [OCR] 收到图片数据 ({len(image_base64)} 字符)，开始调用百度OCR")
         ocr_data, err = call_baidu_ocr(image_base64, "vat_invoice")
@@ -735,31 +836,190 @@ def ocr_process():
         
         if ocr_data and not err:
             print(f"  [OCR] 识别成功")
-            parsed = parse_ocr_result(ocr_data)
-            if parsed:
-                db.execute("""
-                    UPDATE invoices SET invoice_number=?, invoice_date=?, seller_name=?,
-                    total_amount=?, project_location=? WHERE id=?
-                """, (
-                    parsed.get("invoice_number", ""),
-                    parsed.get("invoice_date", ""),
-                    parsed.get("seller_name", ""),
-                    parsed.get("total_amount", 0),
-                    parsed.get("project_location", ""),
-                    invoice_id
-                ))
-                db.commit()
-                db.close()
-                return jsonify({"success": True, "data": parsed})
+            try:
+                parsed = parse_ocr_result(ocr_data)
+            except Exception as pe:
+                print(f"  [OCR] 解析失败: {pe}")
+                parsed = {}
+            
+            # 无论能否解析结构化数据，都保存识别结果
+            updates = {
+                "invoice_number": parsed.get("invoice_number", "") if parsed else "",
+                "invoice_date": parsed.get("invoice_date", "") if parsed else "",
+                "seller_name": parsed.get("seller_name", "") if parsed else "",
+                "total_amount": parsed.get("total_amount", 0) if parsed else 0,
+                "project_location": parsed.get("project_location", "") if parsed else "",
+            }
+            
+            # 保存原始OCR文本
+            try:
+                if isinstance(ocr_data, dict):
+                    raw_words = ocr_data.get("words_result", [])
+                    if isinstance(raw_words, dict):
+                        raw_text = " ".join(v.get("words","") if isinstance(v,dict) else str(v) for v in raw_words.values())
+                    elif isinstance(raw_words, list):
+                        raw_text = " ".join(w.get("words","") for w in raw_words)
+                    else:
+                        raw_text = str(ocr_data)
+                else:
+                    raw_text = str(ocr_data)
+            except:
+                raw_text = ""
+            
+            updates["raw_ocr_text"] = raw_text[:500]
+            
+            db.execute("""
+                UPDATE invoices SET invoice_number=?, invoice_date=?, seller_name=?,
+                total_amount=?, project_location=?, raw_ocr_text=?, updated_at=datetime('now','localtime')
+                WHERE id=?
+            """, (updates["invoice_number"], updates["invoice_date"], updates["seller_name"],
+                  updates["total_amount"], updates["project_location"], updates["raw_ocr_text"], invoice_id))
+            db.commit()
+            print(f"  [OCR] 保存: 编号={updates['invoice_number']}, 商家={updates['seller_name']}, 金额={updates['total_amount']}")
+            # 自动分类
+            auto_categorize(db, invoice_id, updates.get("seller_name", ""), updates.get("item_description", ""), updates.get("project_location", ""))
+            db.close()
+            return jsonify({"success": True, "data": updates, "message": "识别完成" if parsed else "识别完成但未能提取结构化数据，请手动编辑"})
     
     db.close()
-    # 返回详细的错误原因
     err_msg = "OCR识别失败"
     if image_base64 and not BAIDU_API_KEY:
         err_msg = "OCR暂不可用：未配置百度云API Key"
     elif image_base64 and err:
         err_msg = f"OCR识别失败: {err}"
+    print(f"  [OCR] 失败: {err_msg}")
     return jsonify({"success": False, "error": err_msg})
+
+# ── 清理重复发票 ──────────────────────────────────────
+@app.route("/api/invoices/cleanup", methods=["POST"])
+@require_auth
+def cleanup_duplicates():
+    """清理重复发票（同名+同大小视为重复，保留最新）"""
+    db = get_db()
+    uid = current_user_id()
+    
+    if is_admin():
+        all_invs = db.execute(
+            "SELECT id, original_filename, file_size, storage_path FROM invoices ORDER BY created_at DESC"
+        ).fetchall()
+    else:
+        all_invs = db.execute(
+            "SELECT id, original_filename, file_size, storage_path FROM invoices WHERE uploaded_by=? ORDER BY created_at DESC",
+            (uid,)
+        ).fetchall()
+    
+    seen = {}
+    to_delete_ids = []
+    to_delete_paths = []
+    
+    for inv in all_invs:
+        key = f"{inv['original_filename']}_{inv['file_size'] or 0}"
+        if key in seen:
+            to_delete_ids.append(inv['id'])
+            to_delete_paths.append(inv['storage_path'])
+        else:
+            seen[key] = True
+    
+    if not to_delete_ids:
+        db.close()
+        return jsonify({"success": True, "deleted": 0, "message": "没有发现重复发票"})
+    
+    # 批量删除
+    deleted = 0
+    for inv_id in to_delete_ids:
+        try:
+            db.execute("DELETE FROM invoices WHERE id=?", (inv_id,))
+            deleted += 1
+        except Exception as e:
+            print(f"  [清理] 删除失败 id={inv_id}: {e}")
+    
+    db.commit()
+    db.close()
+    
+    # 删除存储文件（后台清理，不阻塞响应）
+    for path in to_delete_paths:
+        try:
+            filepath = INVOICES_DIR / path
+            if filepath.exists():
+                filepath.unlink()
+        except Exception as e:
+            print(f"  [清理] 文件删除失败 {path}: {e}")
+    
+    print(f"  [清理] 已删除 {deleted} 条重复记录")
+    return jsonify({"success": True, "deleted": deleted, "message": f"已清理 {deleted} 条重复记录"})
+
+# ── 管理员统计 ────────────────────────────────────────
+@app.route("/api/admin/stats", methods=["GET"])
+@require_admin
+def admin_stats():
+    """获取各用户费用统计"""
+    db = get_db()
+    current_year = datetime.now().year
+    
+    stats = db.execute("""
+        SELECT u.id, u.email, u.name,
+            COUNT(i.id) as total_count,
+            SUM(CASE WHEN i.status='approved' THEN 1 ELSE 0 END) as approved_count,
+            COALESCE(SUM(i.total_amount), 0) as total_amount,
+            COALESCE(SUM(CASE WHEN i.status='approved' THEN i.total_amount ELSE 0 END), 0) as approved_amount
+        FROM users u
+        LEFT JOIN invoices i ON i.uploaded_by = u.id 
+            AND i.invoice_date >= ? AND i.invoice_date <= ?
+        GROUP BY u.id, u.email, u.name
+        ORDER BY total_amount DESC
+    """, (f"{current_year}-01-01", f"{current_year}-12-31")).fetchall()
+    
+    db.close()
+    return jsonify({
+        "year": current_year,
+        "stats": [dict(row) for row in stats]
+    })
+
+# ── 删除费用类目 ──────────────────────────────────────
+@app.route("/api/categories/<int:cat_id>", methods=["DELETE"])
+@require_admin
+def delete_category(cat_id):
+    """删除费用类目（仅管理员，且该类别下无发票时才能删除）"""
+    db = get_db()
+    # 检查是否有发票使用此类别
+    has_invoices = db.execute("SELECT COUNT(*) as cnt FROM invoices WHERE category_id=?", (cat_id,)).fetchone()
+    if has_invoices and has_invoices["cnt"] > 0:
+        db.close()
+        return jsonify({"error": f"该类别下有 {has_invoices['cnt']} 张发票，无法删除"}), 400
+    
+    db.execute("DELETE FROM expense_categories WHERE id=?", (cat_id,))
+    db.commit()
+    db.close()
+    print(f"  [类目] 已删除 id={cat_id}")
+    return jsonify({"success": True, "message": "类目已删除"})
+
+# ── 批量更新发票状态 ──────────────────────────────────
+@app.route("/api/invoices/batch-status", methods=["POST"])
+@require_auth
+def batch_update_status():
+    """批量审核发票"""
+    data = request.get_json() or {}
+    ids = data.get("ids", [])
+    status = data.get("status", "approved")
+    
+    if not ids:
+        return jsonify({"error": "请选择至少一张发票"}), 400
+    if status not in ("approved", "rejected"):
+        return jsonify({"error": "无效的状态"}), 400
+    
+    db = get_db()
+    updated = 0
+    for inv_id in ids:
+        try:
+            db.execute("UPDATE invoices SET status=?, updated_at=datetime('now','localtime') WHERE id=?", (status, inv_id))
+            updated += 1
+        except Exception as e:
+            print(f"  [批量] 更新失败 id={inv_id}: {e}")
+    
+    db.commit()
+    db.close()
+    print(f"  [批量] 已更新 {updated} 张发票状态为 {status}")
+    return jsonify({"success": True, "updated": updated})
 
 # ── 启动 ──────────────────────────────────────────────
 if __name__ == "__main__":

@@ -1,0 +1,120 @@
+# ECS v4.5 - Mac 本地测试版（含 OCR）
+version: "3.8"
+
+services:
+  db:
+    image: postgres:15
+    container_name: ecs-test-db
+    restart: "no"
+    environment:
+      POSTGRES_PASSWORD: "ecs_supabase_2026"
+    volumes:
+      - ecs_test_pgdata:/var/lib/postgresql/data
+      - ./部署包-放到NAS/sql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U supabase_admin -d postgres && psql -U supabase_admin -d postgres -t -c \"SELECT 1 FROM information_schema.schemata WHERE schema_name='auth'\" 2>/dev/null | grep -q 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+      start_period: 5s
+
+  auth:
+    image: supabase/gotrue:v2.190.0-rc.27
+    platform: linux/amd64
+    container_name: ecs-test-auth
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_API_HOST: "0.0.0.0"
+      GOTRUE_API_PORT: 9999
+      API_EXTERNAL_URL: "http://localhost:18000"
+      GOTRUE_SITE_URL: "http://localhost:18000"
+      DATABASE_URL: "postgres://supabase_admin:ecs_supabase_2026@db:5432/postgres?search_path=auth,public,extensions"
+      GOTRUE_JWT_SECRET: "ecs-jwt-secret-2026-v4-minimum-32chars!"
+      GOTRUE_JWT_EXP: 3600
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_EXTERNAL_PASSWORD_ENABLED: "true"
+      GOTRUE_DISABLE_SIGNUP: "false"
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+      GOTRUE_LOG_LEVEL: debug
+      GOTRUE_DB_AUTOMIGRATE: "true"
+
+  rest:
+    image: postgrest/postgrest:v12.2.8
+    platform: linux/amd64
+    container_name: ecs-test-rest
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGRST_DB_URI: "postgres://authenticator:ecs_supabase_2026@db:5432/postgres"
+      PGRST_DB_SCHEMA: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: "ecs-jwt-secret-2026-v4-minimum-32chars!"
+      PGRST_DB_AGGREGATES_ENABLED: "true"
+      PGRST_DB_EXTRA_SEARCH_PATH: "public,extensions"
+      PGRST_APP_SETTINGS_JWT_SECRET: "ecs-jwt-secret-2026-v4-minimum-32chars!"
+
+  storage:
+    image: supabase/storage-api:latest
+    platform: linux/amd64
+    container_name: ecs-test-storage
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      ANON_KEY: "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzgxNDI1NDcwLCJleHAiOjIwOTY3ODU0NzB9.I6dAztwrSp8qzIjsdHCQlTYpp30l9KBpRDvYos1sfiI"
+      SERVICE_KEY: "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UiLCJpYXQiOjE3ODE0MjU0NzAsImV4cCI6MjA5Njc4NTQ3MH0.6G3AYHeOucFMTIPnsFn4558OBy9x4mbD3_dT0VBGHJs"
+      TENANT_ID: stub
+      REGION: auto
+      GLOBAL_S3_BUCKET: stub
+      PGOPTIONS: "-c statement_timeout=10s"
+      DATABASE_URL: "postgres://supabase_admin:ecs_supabase_2026@db:5432/postgres?search_path=storage,auth,public,extensions"
+      PGRST_JWT_SECRET: "ecs-jwt-secret-2026-v4-minimum-32chars!"
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+      STORAGE_BACKEND: file
+      FILE_SIZE_LIMIT: 52428800
+      TENANT_AUTO_CREATION: "false"
+    volumes:
+      - ecs_test_storage:/var/lib/storage
+
+  ocr:
+    image: python:3.12-slim
+    platform: linux/amd64
+    container_name: ecs-test-ocr
+    restart: "no"
+    command: python /app/app.py
+    environment:
+      BAIDU_API_KEY: "8dkGx67xX1Ht1pOghMemQJJ2"
+      BAIDU_SECRET_KEY: "egp7iIvoXGQukCBz27FojvzRB0XkNObb"
+      SUPABASE_URL: "http://gateway:8000"
+      SERVICE_KEY: "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UiLCJpYXQiOjE3ODE0MjU0NzAsImV4cCI6MjA5Njc4NTQ3MH0.6G3AYHeOucFMTIPnsFn4558OBy9x4mbD3_dT0VBGHJs"
+      PORT: 9000
+    volumes:
+      - ./部署包-放到NAS/ocr-service/app.py:/app/app.py
+
+  gateway:
+    image: nginx:alpine
+    platform: linux/amd64
+    container_name: ecs-test-gateway
+    restart: "no"
+    ports:
+      - "18000:8000"
+    depends_on:
+      - auth
+      - rest
+      - storage
+      - ocr
+    volumes:
+      - ./nginx.local.conf:/etc/nginx/nginx.conf:ro
+      - ./部署包-放到NAS/index.html:/usr/share/nginx/html/index.html:ro
+
+volumes:
+  ecs_test_pgdata:
+  ecs_test_storage:

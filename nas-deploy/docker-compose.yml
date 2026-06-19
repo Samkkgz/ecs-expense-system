@@ -1,0 +1,116 @@
+# v3.1 - NAS 精简版（密码登录，nginx网关，6容器）
+version: "3.8"
+
+services:
+  db:
+    image: supabase/postgres:15.14.1.135
+    container_name: ecs-db
+    restart: always
+    ports:
+      - "15432:5432"
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "supabase_admin"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  gateway:
+    image: nginx:alpine
+    container_name: ecs-gateway
+    restart: always
+    ports:
+      - "18000:8000"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./index.html:/usr/share/nginx/html/index.html:ro
+    depends_on:
+      db:
+        condition: service_healthy
+
+  auth:
+    image: supabase/gotrue:v2.190.0-rc.27
+    container_name: ecs-auth
+    restart: always
+    environment:
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_API_HOST: "0.0.0.0"
+      GOTRUE_API_PORT: 9999
+      API_EXTERNAL_URL: ${PUBLIC_URL:-http://192.168.3.150:18000}
+      GOTRUE_SITE_URL: ${SITE_URL:-http://192.168.3.150:18000}
+      DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD}@db:5432/postgres
+      GOTRUE_JWT_SECRET: ${JWT_SECRET}
+      GOTRUE_JWT_EXP: 3600
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "false"
+      GOTRUE_EXTERNAL_PASSWORD_ENABLED: "true"
+      GOTRUE_DISABLE_SIGNUP: "false"
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+      GOTRUE_LOG_LEVEL: info
+    depends_on:
+      db:
+        condition: service_healthy
+
+  rest:
+    image: postgrest/postgrest:v12.2.8
+    container_name: ecs-rest
+    restart: always
+    environment:
+      PGRST_DB_URI: postgres://authenticator:${POSTGRES_PASSWORD}@db:5432/postgres
+      PGRST_DB_SCHEMA: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      PGRST_DB_AGGREGATES_ENABLED: "true"
+      PGRST_DB_EXTRA_SEARCH_PATH: public,extensions
+      PGRST_APP_SETTINGS_JWT_SECRET: ${JWT_SECRET}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  storage:
+    image: supabase/storage-api:latest
+    container_name: ecs-storage
+    restart: always
+    environment:
+      ANON_KEY: ${ANON_KEY}
+      SERVICE_KEY: ${SERVICE_KEY}
+      TENANT_ID: stub
+      REGION: auto
+      GLOBAL_S3_BUCKET: stub
+      PGOPTIONS: "-c statement_timeout=5s"
+      DATABASE_URL: postgres://supabase_storage_admin:${POSTGRES_PASSWORD}@db:5432/postgres
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+      STORAGE_BACKEND: file
+      FILE_SIZE_LIMIT: 52428800
+      TENANT_AUTO_CREATION: "true"
+    volumes:
+      - storage-data:/var/lib/storage
+    depends_on:
+      db:
+        condition: service_healthy
+
+  ocr:
+    image: python:3.12-slim
+    container_name: ecs-ocr
+    restart: always
+    command: sh -c "pip install -q requests pdfplumber && python /app/app.py"
+    environment:
+      BAIDU_API_KEY: ${BAIDU_API_KEY:-}
+      BAIDU_SECRET_KEY: ${BAIDU_SECRET_KEY:-}
+      SUPABASE_URL: http://gateway:8000
+      SERVICE_KEY: ${SERVICE_KEY}
+      PORT: 9000
+    volumes:
+      - ./ocr-service/app.py:/app/app.py
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  db-data:
+  storage-data:
