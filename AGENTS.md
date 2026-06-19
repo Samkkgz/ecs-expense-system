@@ -13,18 +13,20 @@ ECS-Expanse-System/
 │   └── supabase/functions/
 │       └── process-invoice/index.ts ← Edge Function（OCR 识别）
 │
-├── nas/                            ← 🟢 NAS Docker 自托管版
-│   ├── docker-compose.yml          ← 6 容器编排（db + gateway + auth + rest + storage + ocr）
+├── nas/                            ← 🟢 NAS Docker 自托管版 (v4.5)
+│   ├── docker-compose.yml          ← 5 容器编排（db + auth + rest + storage + ocr）
 │   ├── index.html                  ← 前端（连 NAS 本地 http://192.168.3.150:18000）
-│   ├── kong.yml                    ← Kong API 网关配置
 │   ├── nginx.conf                  ← Nginx 反向代理配置
+│   ├── kong.yml                    ← Kong API 网关配置
 │   ├── sql/init.sql                ← 数据库完整初始化脚本
-│   └── ocr-service/                ← Python OCR 识别服务
+│   └── ocr-service/                ← Python OCR 识别服务（纯 stdlib，无 pip 依赖）
+│       ├── Dockerfile
+│       ├── app.py
+│       └── requirements.txt
 │
 ├── .github/workflows/
 │   └── deploy.yml                  ← push main → 自动部署 cloud/ 到 Pages
 ├── .gitignore / README.md / VERSIONS.md
-├── .agents/
 ├── AGENTS.md
 └── 明天跑这个.txt
 ```
@@ -39,12 +41,8 @@ ECS-Expanse-System/
 | 修改 NAS 容器配置 | `nas/docker-compose.yml` | 同上 |
 | 修改 NAS 版 OCR | `nas/ocr-service/` | 同上 |
 
-## Git 分支
-- `develop` — 日常开发，push 后建议确认无问题再合并
-- `main` — 生产分支，push/merge 触发 Pages 自动部署（cloud/ 目录）
-
-## 禁止行为
-- 不在 `cloud/` 中存放 NAS 相关代码
-- 不在 `nas/` 中存放 Supabase 云服务相关代码
-- 修改 cloud 时不影响 nas，反之亦然
+## 注意
+- NAS 版当前版本 v4.5（OCR 纯 stdlib，5 容器，named volumes）
+- `nas/` 目录代码与 NAS 上 `/volume1/docker/ecs-expense/` 保持一致
+- 如修改 `nas/` 代码，需同步复制到 NAS 部署目录
 - `.env` 文件不提交 git（已由 .gitignore 排除）

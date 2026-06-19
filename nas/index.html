@@ -1,3 +1,4 @@
+<!-- ECS v4.10 -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -44,7 +45,7 @@
 .upload-zone p{color:#666;margin:0}
 .upload-progress{margin-top:16px;display:none}.upload-progress.active{display:block}
 .table{margin:0}.table th{font-weight:600;font-size:13px;color:#666;border-top:none}.table td{vertical-align:middle;font-size:14px}
-.filter-bar{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+.export-item:hover{background:#f0f2f5;}.filter-bar{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px}
 .filter-bar select,.filter-bar input{padding:8px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px}
 .filter-bar select:focus,.filter-bar input:focus{outline:none;border-color:#667eea}
 .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;overflow-y:auto;padding:20px}
@@ -75,7 +76,7 @@
 <!-- 主应用 -->
 <div class="app-layout" id="appLayout">
   <div class="sidebar">
-    <div class="sidebar-header"><h2>🧾 ECS 报销</h2><small>NAS 自托管版</small></div>
+    <div class="sidebar-header"><h2>🧾 ECS 报销 <span style="font-size:11px;opacity:0.5">v4.10</span></h2><small>NAS 自托管版</small></div>
     <div class="sidebar-nav">
       <button class="nav-item active" data-page="dashboard"><i class="bi bi-speedometer2"></i><span>仪表盘</span></button>
       <button class="nav-item" data-page="upload"><i class="bi bi-cloud-upload"></i><span>上传发票</span></button>
@@ -126,10 +127,10 @@
           <select id="filterCategory"><option value="">全部类目</option></select>
           <select id="filterStatus"><option value="">全部状态</option><option value="pending">待审核</option><option value="approved">已通过</option><option value="rejected">已驳回</option></select>
           <input type="text" id="filterSearch" placeholder="🔍 搜索...">
-          <button class="btn btn-sm btn-outline-success" onclick="exportInvoices()"><i class="bi bi-download"></i> 导出</button>
+          <div class="export-dropdown" style="position:relative;display:inline-block"><button class="btn btn-sm btn-outline-success" onclick="toggleExportMenu(event)"><i class="bi bi-download"></i> 导出 ▾</button><div class="export-menu" style="display:none;position:absolute;right:0;top:100%;z-index:999;background:#fff;border:1px solid #ddd;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.12);min-width:180px;padding:4px 0"><a class="export-item" href="#" onclick="exportInvoices();closeExportMenu();return false" style="display:block;padding:8px 16px;color:#333;text-decoration:none;font-size:13px"><i class="bi bi-file-earmark-excel"></i> 导出统计报表 (Excel)</a><a class="export-item" href="#" onclick="exportOriginalsZip();closeExportMenu();return false" style="display:block;padding:8px 16px;color:#333;text-decoration:none;font-size:13px"><i class="bi bi-file-zip"></i> 导出选中原件 (ZIP)</a></div></div><span id="selectedCount" style="font-size:12px;color:#667eea;display:none;margin-left:4px;white-space:nowrap"></span>
           <button class="btn btn-sm btn-outline-warning" onclick="cleanupDuplicates()" title="清理重复"><i class="bi bi-eraser"></i></button>
         </div>
-        <div class="table-responsive"><table class="table table-hover"><thead><tr><th>发票号码</th><th>日期</th><th>商家</th><th>金额</th><th>类目</th><th>状态</th><th>操作</th></tr></thead><tbody id="invoiceTableBody"></tbody></table></div>
+        <div class="table-responsive"><table class="table table-hover"><thead><tr><th style="width:36px"><input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll()" title="全选"></th><th>发票号码</th><th>日期</th><th>商家</th><th>金额</th><th>类目</th><th>状态</th><th>操作</th></tr></thead><tbody id="invoiceTableBody"></tbody></table></div>
         <nav><ul class="pagination pagination-sm justify-content-center" id="invoicePagination"></ul></nav>
       </div>
     </div>
@@ -188,13 +189,15 @@
 <!-- ============ 配置（唯一需要改的地方） ============ -->
 <script>
 // 🔧 NAS 部署配置 - 如果 NAS IP 变了，只改这里
-var SUPABASE_URL = 'http://192.168.3.150:18000';
+var SUPABASE_URL = 'http://100.105.75.56:18000';
 var SUPABASE_ANON_KEY = 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.ecs-anon-key-2026';
-var SITE_URL = 'http://192.168.3.150:18000';
+var SUPABASE_SERVICE_KEY = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UiLCJpYXQiOjE3ODE0MjU0NzAsImV4cCI6MjA5Njc4NTQ3MH0.6G3AYHeOucFMTIPnsFn4558OBy9x4mbD3_dT0VBGHJs";
+var SITE_URL = 'http://100.105.75.56:18000';
 </script>
 
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
 // ============ 主程序 ============
@@ -202,6 +205,7 @@ var sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 var currentUser = {};
 var categories = [];
 var allInvoices = [];
+var selectedInvoices = new Set();
 var currentPage = 'dashboard';
 var currentPageNum = 1;
 var PAGE_SIZE = 20;
@@ -221,13 +225,17 @@ async function handleLogin() {
     var {data, error} = await sb.auth.signInWithPassword({email: email, password: password});
     if (error) {
       // 如果用户不存在，先注册再登录
-      if (error.message && error.message.indexOf('not found') > -1) {
+      if (error.message && (error.message.indexOf('Invalid login') > -1 || error.message.indexOf('not found') > -1)) {
         var {data: signUpData, error: signUpError} = await sb.auth.signUp({email: email, password: password});
-        if (signUpError) throw signUpError;
-        // 注册成功后自动登录
-        var {data: loginData, error: loginError} = await sb.auth.signInWithPassword({email: email, password: password});
-        if (loginError) throw loginError;
-        data = loginData;
+        if (!signUpError) {
+          var {data: loginData, error: loginError} = await sb.auth.signInWithPassword({email: email, password: password});
+          if (loginError) throw loginError;
+          data = loginData;
+        } else if (signUpError.message && signUpError.message.indexOf('already') > -1) {
+          throw new Error('密码错误，请重试');
+        } else {
+          throw signUpError;
+        }
       } else {
         throw error;
       }
@@ -256,12 +264,58 @@ async function handleLogout() {
 }
 
 // ============ 应用初始化 ============
+async function ensureBucket() {
+  console.log("🔍 checking invoices bucket...");
+  // 先检查 bucket 是否已存在
+  try {
+    var checkRes = await fetch(SUPABASE_URL + "/storage/v1/bucket/invoices", {
+      headers: { "apikey": SUPABASE_SERVICE_KEY }
+    });
+    if (checkRes.ok) {
+      console.log("✅ invoices bucket already exists");
+      return;
+    }
+  } catch(e) {}
+  
+  // 不存在则创建，最多重试 2 次
+  for (var i = 0; i < 2; i++) {
+    try {
+      var r = await fetch(SUPABASE_URL + "/storage/v1/bucket", {
+        method: "POST",
+        headers: {
+          "apikey": SUPABASE_SERVICE_KEY,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ name: "invoices", public: false, file_size_limit: 52428800 })
+      });
+      if (r.ok || r.status === 409) {
+        console.log("✅ invoices bucket ready");
+        return;
+      }
+      var err = await r.json().catch(function(){ return {}; });
+      console.log("⚠️ bucket attempt " + (i+1) + " failed:", r.status, err.message || err.error || "");
+    } catch(e) {
+      console.log("⚠️ bucket attempt " + (i+1) + " error:", e.message);
+    }
+    if (i < 1) await new Promise(function(r){ setTimeout(r, 2000); });
+  }
+  console.log("❌ bucket creation failed");
+}
+
+
 async function showApp() {
+  await ensureBucket();
+
   document.getElementById('loginPage').style.display = 'none';
   document.getElementById('appLayout').classList.add('active');
   document.getElementById('userEmail').textContent = currentUser.email;
   
   var {data: profile} = await sb.from('profiles').select('*').eq('id', currentUser.id).single();
+  if (!profile) {
+    try { await sb.rpc('admin_create_profile',{p_id:currentUser.id,p_email:currentUser.email,p_name:'',p_role:'super_admin'}); }
+    catch(e){ console.log('profile create skipped:',e.message); }
+    profile = {id:currentUser.id, email:currentUser.email, role:'super_admin', status:'active'};
+  }
   currentUser.profile = profile || {role: 'member'};
   document.getElementById('userName').textContent = (profile && profile.name) || currentUser.email;
   currentUser.isAdmin = profile && (profile.role === 'admin' || profile.role === 'super_admin');
@@ -359,11 +413,214 @@ async function loadDashboard() {
   var monthApproved = approved.filter(function(i){return i.invoice_date && i.invoice_date.startsWith(y+'-'+m);});
   var pending = invs.filter(function(i){return i.status==='pending';});
   
-  document.getElementById('dashYearTotal').textContent = '¥'+approved.reduce(function(s,i){return s+parseFloat(i.total_amount||0);},0).toFixed(2);
-  document.getElementById('dashMonthTotal').textContent = '¥'+monthApproved.reduce(function(s,i){return s+parseFloat(i.total_amount||0);},0).toFixed(2);
+  document.getElementById('dashYearTotal').textContent = '¥'+approved.reduce(function(s,i){return s+parseFloat(i.total_amount||0);},0).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
+  document.getElementById('dashMonthTotal').textContent = '¥'+monthApproved.reduce(function(s,i){return s+parseFloat(i.total_amount||0);},0).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
   document.getElementById('dashCount').textContent = approved.length;
   document.getElementById('dashPending').textContent = pending.length + ' 张待审核';
+
+  // 按月度×类目汇总（堆叠柱状图 + 面积图共用）
+  var monthlyByCategory = Array(12).fill(null).map(function(){return {};});
+  var monthlyTotals = Array(12).fill(0);
+  var catTotals = {};
+  approved.forEach(function(inv){
+    if (inv.invoice_date) {
+      var mi = parseInt(inv.invoice_date.split('-')[1])-1;
+      var amt = parseFloat(inv.total_amount||0);
+      monthlyTotals[mi] += amt;
+      monthlyByCategory[mi][inv.category_id] = (monthlyByCategory[mi][inv.category_id]||0) + amt;
+    }
+    catTotals[inv.category_id] = (catTotals[inv.category_id]||0) + parseFloat(inv.total_amount||0);
+  });
+
+  drawMonthlyBar(monthlyByCategory, catTotals);
+  drawCategoryPie(monthlyByCategory, catTotals);
 }
+
+function drawMonthlyBar(monthlyByCategory, catTotals) {
+  var now = new Date();
+  var year = now.getFullYear();
+  var labels = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+  
+  // 排序类目，取前7个
+  var catEntries = Object.entries(catTotals).sort(function(a,b){return b[1]-a[1];});
+  var topCats = catEntries.slice(0, 7);
+  var otherTotal = catEntries.slice(7).reduce(function(s,e){return s+e[1];},0);
+  if (otherTotal > 0) topCats.push(['__other__', otherTotal]);
+  
+  // 每月总和求全局最大值
+  var monthlySums = Array(12).fill(0);
+  monthlyByCategory.forEach(function(mc,i){monthlySums[i]=Object.values(mc).reduce(function(s,v){return s+v;},0);});
+  var globalMax = Math.max.apply(null, monthlySums.concat([1]));
+  
+  var chartHtml = '<canvas id="monthBar" width="600" height="220"></canvas>';
+  var existing = document.getElementById('dashMonthlyChart');
+  if (existing) existing.innerHTML = '<h5>📊 月度类目支出</h5>'+chartHtml;
+  else {
+    var div = document.createElement('div'); div.id = 'dashMonthlyChart';
+    div.className = 'section-card'; div.innerHTML = '<h5>📊 月度类目支出</h5>'+chartHtml;
+    var row = document.getElementById('page-dashboard').querySelector('.row');
+    if (row && row.parentNode) row.parentNode.insertBefore(div, row.nextSibling);
+  }
+  setTimeout(function() {
+    var canvas = document.getElementById('monthBar');
+    if (!canvas) return;
+    var ctx = canvas.getContext('2d');
+    var w = canvas.parentNode.clientWidth - 48;
+    canvas.width = w; canvas.height = 220;
+    var pad = {t:20,b:30,l:60,r:20};
+    var cw = (w-pad.l-pad.r)/12;
+    var colors = ['#667eea','#764ba2','#f093fb','#4facfe','#43e97b','#fa709a','#a18cd1','#fbc2eb'];
+    
+    ctx.clearRect(0, 0, w, 220);
+    
+    // 画 Y 轴参考线
+    ctx.strokeStyle = '#eee'; ctx.lineWidth = 1;
+    for (var g = 0; g <= 4; g++) {
+      var gy = pad.t + (220-pad.t-pad.b)*g/4;
+      ctx.beginPath(); ctx.moveTo(pad.l, gy); ctx.lineTo(w-pad.r, gy); ctx.stroke();
+      ctx.fillStyle = '#999'; ctx.font = '11px sans-serif';
+      ctx.fillText('¥'+(globalMax*(4-g)/4).toFixed(0), 2, gy+4);
+    }
+    
+    // 画堆叠柱
+    for (var i = 0; i < 12; i++) {
+      var x = pad.l + i*cw + 2;
+      var stackY = pad.t + (220-pad.t-pad.b);
+      var monthData = monthlyByCategory[i] || {};
+      
+      topCats.forEach(function(entry, ci){
+        var catId = entry[0];
+        var amt = catId === '__other__' ? Object.entries(monthData).reduce(function(s,e){
+          var isTop = topCats.slice(0,-1).some(function(t){return t[0]==e[0];});
+          return s+(isTop?0:e[1]);
+        },0) : (monthData[catId]||0);
+        
+        var h = (220-pad.t-pad.b)*(amt/globalMax);
+        if (h < 0.5) return;
+        ctx.fillStyle = colors[ci%colors.length];
+        ctx.beginPath();
+        ctx.fillRect(x, stackY-h, cw-4, h);
+        ctx.fill();
+        stackY -= h;
+      });
+      
+      // 月份标签
+      ctx.fillStyle = '#666'; ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(labels[i], x+cw/2-2, 220-4);
+    }
+    
+    // 图例
+    var lx = pad.l, ly = 6;
+    topCats.slice(0,7).forEach(function(entry,ci){
+      var name = entry[0]==='__other__'?'其他':(categories.find(function(c){return c.id==entry[0];})||{}).name||'类目#'+entry[0];
+      ctx.fillStyle = colors[ci%colors.length];
+      ctx.fillRect(lx, ly, 8, 8);
+      ctx.fillStyle = '#555'; ctx.font = '10px sans-serif'; ctx.textAlign = 'left';
+      ctx.fillText(name, lx+10, ly+8);
+      lx += ctx.measureText(name).width + 22;
+    });
+  }, 200);
+}
+
+function drawCategoryPie(monthlyByCategory, catTotals) {
+  var labels = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+  
+  // 排序类目前7个
+  var catEntries = Object.entries(catTotals).sort(function(a,b){return b[1]-a[1];});
+  var topCats = catEntries.slice(0, 7);
+  var otherTotal = catEntries.slice(7).reduce(function(s,e){return s+e[1];},0);
+  if (otherTotal > 0) topCats.push(['__other__', otherTotal]);
+  
+  // 每月总和
+  var monthlySums = Array(12).fill(0);
+  monthlyByCategory.forEach(function(mc,i){monthlySums[i]=Object.values(mc).reduce(function(s,v){return s+v;},0);});
+  var globalMax = Math.max.apply(null, monthlySums.concat([1]));
+  var colors = ['#667eea','#764ba2','#f093fb','#4facfe','#43e97b','#fa709a','#a18cd1','#fbc2eb'];
+  
+  // 每类目每月值
+  var series = topCats.map(function(entry){
+    return monthlyByCategory.map(function(mc){
+      var catId = entry[0];
+      if (catId==='__other__') return Object.entries(mc).reduce(function(s,e){
+        var isTop = topCats.slice(0,-1).some(function(t){return t[0]==e[0];});
+        return s+(isTop?0:e[1]);
+      },0);
+      return mc[catId]||0;
+    });
+  });
+  
+  var chartHtml = '<canvas id="catPie" width="600" height="220"></canvas>';
+  var existing = document.getElementById('dashPieChart');
+  if (existing) existing.innerHTML = '<h5>📈 月度类目趋势</h5>'+chartHtml;
+  else {
+    var div = document.createElement('div'); div.id = 'dashPieChart';
+    div.className = 'section-card'; div.innerHTML = '<h5>📈 月度类目趋势</h5>'+chartHtml;
+    var row = document.getElementById('page-dashboard').querySelector('.row');
+    if (row && row.parentNode) row.parentNode.appendChild(div);
+  }
+  setTimeout(function() {
+    var canvas = document.getElementById('catPie');
+    if (!canvas) return;
+    var ctx = canvas.getContext('2d');
+    var w = canvas.parentNode.clientWidth - 48;
+    canvas.width = w; canvas.height = 220;
+    var pad = {t:20,b:30,l:60,r:12};
+    var cw = (w-pad.l-pad.r)/11;
+    
+    ctx.clearRect(0,0,w,220);
+    
+    // 反向绘制堆叠面积（底层→顶层）
+    for (var ci = series.length-1; ci >= 0; ci--) {
+      var vals = series[ci];
+      ctx.beginPath();
+      ctx.moveTo(pad.l, 220-pad.b);
+      for (var i = 0; i < 12; i++) {
+        var x = pad.l + i*cw;
+        var cumY = 0;
+        for (var k = 0; k <= ci; k++) cumY += series[k][i];
+        var y = pad.t + (220-pad.t-pad.b)*(1-cumY/globalMax);
+        if (i===0) ctx.lineTo(x, y);
+        else {
+          var px = pad.l+(i-1)*cw;
+          var prevCumY = 0;
+          for (var k = 0; k <= ci; k++) prevCumY += series[k][i-1];
+          var py = pad.t+(220-pad.t-pad.b)*(1-prevCumY/globalMax);
+          var cpx = (px+x)/2;
+          ctx.bezierCurveTo(cpx, py, cpx, y, x, y);
+        }
+      }
+      ctx.lineTo(pad.l+11*cw, 220-pad.b);
+      ctx.closePath();
+      ctx.fillStyle = colors[ci%colors.length];
+      ctx.globalAlpha = 0.6;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+    
+    // X 轴
+    ctx.fillStyle = '#666'; ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
+    labels.forEach(function(l,i){ctx.fillText(l, pad.l+i*cw, 220-4);});
+    
+    // Y 轴
+    ctx.fillStyle = '#999'; ctx.font = '11px sans-serif'; ctx.textAlign = 'right';
+    for (var j = 0; j <= 4; j++) {
+      var yv = globalMax*j/4, yPos = pad.t+(220-pad.t-pad.b)*(1-j/4);
+      ctx.fillText('¥'+yv.toFixed(0), pad.l-5, yPos+4);
+    }
+    
+    // 图例
+    var lx = pad.l, ly = 6;
+    topCats.slice(0,7).forEach(function(entry,ci){
+      var name = entry[0]==='__other__'?'其他':(categories.find(function(c){return c.id==entry[0];})||{}).name||'类目#'+entry[0];
+      ctx.fillStyle = colors[ci%colors.length];
+      ctx.fillRect(lx, ly, 8, 8);
+      ctx.fillStyle = '#555'; ctx.font = '10px sans-serif'; ctx.textAlign = 'left';
+      ctx.fillText(name, lx+10, ly+8);
+      lx += ctx.measureText(name).width+22;
+    });
+  }, 300);
+}
+
 
 // ============ 上传 ============
 var zone = document.getElementById('uploadZone');
@@ -385,29 +642,29 @@ async function handleFiles(files) {
   var catId = document.getElementById('uploadCategory').value;
   var loc = document.getElementById('uploadLocation').value.trim();
   var parts = month.split('-');
-  
+  var seenInBatch = {};
   for (var i = 0; i < files.length; i++) {
     var file = files[i];
     var ext = file.name.split('.').pop().toLowerCase();
     if (['pdf','png','jpg','jpeg','bmp'].indexOf(ext) === -1) { resultDiv.innerHTML += '<div class="alert alert-warning py-1">⏭ 不支持: '+file.name+'</div>'; continue; }
-    
+    var batchKey = file.name+'_'+file.size;
+    if (seenInBatch[batchKey]) { resultDiv.innerHTML += '<div class="alert alert-info py-1">⏭ 已跳过本次重复: '+file.name+'</div>'; continue; }
+    seenInBatch[batchKey] = true;
+    var {data: dupes} = await sb.from('invoices').select('id').eq('original_filename',file.name).eq('file_size',file.size).limit(1);
+    if (dupes&&dupes.length) { resultDiv.innerHTML += '<div class="alert alert-info py-1">⏭ 已跳过: '+file.name+'（已存在）</div>'; continue; }
     var pct = Math.round((i/files.length)*100);
     bar.style.width = pct+'%'; bar.textContent = pct+'%';
     status.textContent = '上传中 ('+(i+1)+'/'+files.length+'): '+file.name;
-    
     try {
-      var path = 'invoices/'+parts[0]+'/'+parts[1]+'/'+Date.now()+'.'+ext;
+      var path = parts[0]+'/'+parts[1]+'/'+Date.now()+'.'+ext;
       var {error: upErr} = await sb.storage.from('invoices').upload(path, file);
       if (upErr) throw new Error(upErr.message);
-      
       var body = {storage_path: path, original_filename: file.name, file_size: file.size};
       if (month) body.invoice_date = month+'-01';
       if (catId) body.category_id = parseInt(catId);
       if (loc) body.project_location = loc;
-      
       var {error: insErr} = await sb.rpc('insert_invoice', body);
       if (insErr) throw new Error(insErr.message);
-      
       resultDiv.innerHTML += '<div class="alert alert-success py-1">✅ '+file.name+'</div>';
     } catch(e) {
       resultDiv.innerHTML += '<div class="alert alert-danger py-1">❌ '+file.name+': '+e.message+'</div>';
@@ -432,7 +689,7 @@ async function loadInvoices() {
   
   var query = sb.from('invoices').select('*',{count:'exact'}).order('created_at',{ascending:false});
   if (!currentUser.isAdmin) query = query.eq('uploaded_by', currentUser.id);
-  if (fm) query = query.gte('invoice_date',fm+'-01').lte('invoice_date',fm+'-31');
+  if (fm) { var fmp=fm.split('-'); var fmd=new Date(parseInt(fmp[0]),parseInt(fmp[1]),0).getDate(); query = query.gte('invoice_date',fm+'-01').lte('invoice_date',fm+'-'+String(fmd).padStart(2,'0')); }
   if (fc) query = query.eq('category_id',fc);
   if (fs) query = query.eq('status',fs);
   
@@ -443,7 +700,7 @@ async function loadInvoices() {
   var filtered = allInvoices;
   if (search) {
     var s = search.toLowerCase();
-    filtered = allInvoices.filter(function(inv){return (inv.invoice_number&&inv.invoice_number.toLowerCase().indexOf(s)>-1)||(inv.seller_name&&inv.seller_name.toLowerCase().indexOf(s)>-1)||(inv.item_description&&inv.item_description.toLowerCase().indexOf(s)>-1);});
+    filtered = allInvoices.filter(function(inv){return (inv.invoice_number&&inv.invoice_number.toLowerCase().indexOf(s)>-1)||(inv.seller_name&&inv.seller_name.toLowerCase().indexOf(s)>-1)||(inv.raw_ocr_text&&inv.raw_ocr_text.toLowerCase().indexOf(s)>-1);});
   }
   
   var totalPages = Math.ceil(filtered.length/PAGE_SIZE);
@@ -452,14 +709,15 @@ async function loadInvoices() {
   var pageData = filtered.slice(start, start+PAGE_SIZE);
   
   var tbody = document.getElementById('invoiceTableBody');
-  if (!pageData.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">暂无发票</td></tr>'; }
+  if (!pageData.length) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">暂无发票</td></tr>'; }
   else {
     tbody.innerHTML = pageData.map(function(inv){
       var cat = categories.find(function(c){return c.id===inv.category_id;});
       var st = inv.status==='approved'?'badge-approved':inv.status==='rejected'?'bg-danger':'badge-pending';
       var stText = inv.status==='approved'?'已通过':inv.status==='rejected'?'已驳回':'待审核';
-      return '<tr><td><small>'+(inv.invoice_number||'-')+'</small></td><td><small>'+(inv.invoice_date||'-')+'</small></td><td><small>'+(inv.seller_name||'-').substring(0,20)+'</small></td><td><strong>¥'+parseFloat(inv.total_amount||0).toFixed(2)+'</strong></td><td><span class="badge bg-secondary">'+(cat?cat.name:'未分类')+'</span></td><td><span class="badge-status '+st+'">'+stText+'</span></td><td style="white-space:nowrap"><button class="btn btn-sm btn-outline-info" onclick="ocrInvoice('+inv.id+')" title="OCR识别">↻</button> <button class="btn btn-sm btn-outline-primary" onclick="editInvoice('+inv.id+')">✎</button> <button class="btn btn-sm btn-outline-danger" onclick="deleteInvoice('+inv.id+')">✕</button></td></tr>';
+      var ckd = selectedInvoices.has(inv.id)?' checked':''; return '<tr><td><input type="checkbox" class="inv-checkbox" data-id="'+inv.id+'" onchange="toggleSelect('+inv.id+',this.checked)"'+ckd+'></td><td><small>'+(inv.invoice_number||'-')+'</small></td><td><small>'+(inv.invoice_date||'-')+'</small></td><td><small>'+(inv.seller_name||'-').substring(0,20)+'</small></td><td><strong>¥'+parseFloat(inv.total_amount||0).toFixed(2)+'</strong></td><td><span class="badge bg-secondary">'+(cat?cat.name:'未分类')+'</span></td><td><span class="badge-status '+st+'">'+stText+'</span></td><td style="white-space:nowrap"><button class="btn btn-sm btn-outline-info" onclick="ocrInvoice('+inv.id+')" title="OCR识别">↻</button> <button class="btn btn-sm btn-outline-primary" onclick="editInvoice('+inv.id+')">✎</button> <button class="btn btn-sm btn-outline-danger" onclick="deleteInvoice('+inv.id+')">✕</button></td></tr>';
     }).join('');
+    var scb=document.getElementById('selectAllCheckbox');if(scb)scb.checked=false;updateSelectedCount();
   }
   
   var pag = document.getElementById('invoicePagination');
@@ -481,12 +739,14 @@ async function ocrInvoice(id) {
       body: JSON.stringify({record:{id:id,storage_path:inv.storage_path}})
     });
     var result = await r.json();
-    if (result.success) { showToast('✅ 识别完成','success'); loadInvoices(); editInvoice(id); return; }
+    if (result.success) { showToast('✅ 识别完成','success'); await loadInvoices(); await editInvoice(id); return; }
     
     // 降级：渲染为图片再OCR
-    var dlUrl = SUPABASE_URL+'/storage/v1/object/public/invoices/'+inv.storage_path;
-    var dlRes = await fetch(dlUrl);
-    var blob = await dlRes.blob();
+    var sp = inv.storage_path;
+    if (sp && sp.startsWith("invoices/")) sp = sp.substring(9);
+    var dlRes = await sb.storage.from('invoices').download(sp);
+    if (dlRes.error) { showToast('下载失败: '+dlRes.error.message,'danger'); return; }
+    var blob = dlRes.data;
     var ext = (inv.original_filename||'').split('.').pop().toLowerCase();
     
     var can = document.createElement('canvas');
@@ -512,8 +772,29 @@ async function ocrInvoice(id) {
     });
     var result2 = await r2.json();
     if (result2.success) { showToast('✅ 识别完成','success'); } else { showToast('⚠️ 无法识别，请手动填写','warning'); }
-    loadInvoices(); editInvoice(id);
+    await loadInvoices(); await editInvoice(id);
   } catch(e) { showToast('识别失败: '+e.message,'danger'); }
+}
+
+
+async function loadPreview(inv) {
+  var el = document.getElementById("invoicePreview");
+  if (!el) return;
+  el.innerHTML = "<div class='text-muted py-3'><small>加载预览中...</small></div>";
+  try {
+    var sp = inv.storage_path;
+    if (sp && sp.startsWith("invoices/")) sp = sp.substring(9);
+    var dlRes = await sb.storage.from("invoices").download(sp);
+    if (dlRes.error) { el.innerHTML = ""; return; }
+    var blob = dlRes.data;
+    var url = URL.createObjectURL(blob);
+    var ext = (inv.original_filename||"").split(".").pop().toLowerCase();
+    if (ext === "pdf") {
+      el.innerHTML = "<embed src=\""+url+"\" width=\"100%\" height=\"280px\" type=\"application/pdf\">";
+    } else {
+      el.innerHTML = "<img src=\""+url+"\" style=\"max-width:100%;max-height:280px;border-radius:8px;border:1px solid #ddd\">";
+    }
+  } catch(e) { el.innerHTML = ""; }
 }
 
 // ============ 编辑弹窗 ============
@@ -522,15 +803,16 @@ async function editInvoice(id) {
   var inv = allInvoices.find(function(i){return i.id===id;});
   if (!inv) return;
   document.getElementById('invoiceModal').classList.add('active');
-  document.getElementById('invoiceModalBody').innerHTML = '<div class="row g-3">'+
+  document.getElementById('invoiceModalBody').innerHTML = '<div id="invoicePreview" style="margin-bottom:16px;max-height:300px;overflow:auto;text-align:center"></div><div class="row g-3">'+
     '<div class="col-md-6"><label class="form-label">发票号码</label><input class="form-control" id="editNumber" value="'+(inv.invoice_number||'')+'"></div>'+
     '<div class="col-md-6"><label class="form-label">日期</label><input class="form-control" id="editDate" type="date" value="'+(inv.invoice_date||'')+'"></div>'+
     '<div class="col-md-6"><label class="form-label">商家</label><input class="form-control" id="editSeller" value="'+(inv.seller_name||'')+'"></div>'+
     '<div class="col-md-6"><label class="form-label">金额</label><input class="form-control" id="editAmount" type="number" step="0.01" value="'+(inv.total_amount||'')+'"></div>'+
     '<div class="col-md-6"><label class="form-label">类目</label><select class="form-select" id="editCategory"><option value="">选择</option>'+categories.map(function(c){return '<option value="'+c.id+'"'+(c.id===inv.category_id?' selected':'')+'>'+c.name+'</option>';}).join('')+'</select></div>'+
     '<div class="col-md-6"><label class="form-label">地点</label><input class="form-control" id="editLocation" value="'+(inv.project_location||'')+'"></div>'+
-    '<div class="col-12"><label class="form-label">描述</label><input class="form-control" id="editDesc" value="'+(inv.item_description||'')+'"></div>'+
-    '<div class="col-12"><label class="form-label">备注</label><input class="form-control" id="editNote" value="'+(inv.expense_note||'')+'"></div></div>';
+    '<div class="col-12"><label class="form-label">描述</label><input class="form-control" id="editDesc" value="'+(inv.raw_ocr_text||'')+'"></div>'+
+    '</div>';
+  setTimeout(function(){ loadPreview(inv); }, 200);
 }
 
 function closeModal(){document.getElementById('invoiceModal').classList.remove('active');editingInvoiceId=null;}
@@ -544,12 +826,17 @@ async function saveInvoiceEdit() {
     total_amount: parseFloat(document.getElementById('editAmount').value)||0,
     category_id: parseInt(document.getElementById('editCategory').value)||null,
     project_location: document.getElementById('editLocation').value,
-    item_description: document.getElementById('editDesc').value,
-    expense_note: document.getElementById('editNote').value
+    raw_ocr_text: document.getElementById('editDesc').value
   };
   var {error} = await sb.from('invoices').update(data).eq('id',editingInvoiceId);
-  if (error) showToast('保存失败: '+error.message,'danger');
-  else { showToast('✅ 已保存','success'); loadInvoices(); loadDashboard(); editInvoice(editingInvoiceId); }
+  if (error) { showToast('保存失败: '+error.message,'danger'); return; }
+  showToast('✅ 已保存','success');
+  await loadInvoices();
+  await loadDashboard();
+  var eid = editingInvoiceId;
+  closeModal();
+  editingInvoiceId = eid;
+  await editInvoice(eid);
 }
 
 async function approveInvoice() {
@@ -575,6 +862,19 @@ async function deleteInvoice(id) {
   }
 }
 
+// ============ 导出下拉 ============
+function toggleExportMenu(e){e.stopPropagation();var m=document.querySelector(".export-menu");if(m)m.style.display=m.style.display==="none"?"block":"none";}
+function closeExportMenu(){var m=document.querySelector(".export-menu");if(m)m.style.display="none";}
+document.addEventListener("click",function(e){if(!e.target.closest(".export-dropdown"))closeExportMenu();});
+
+// ============ 多选 ============
+function toggleSelectAll(){var cb=document.getElementById("selectAllCheckbox");if(!cb)return;var c=cb.checked;var cbs=document.querySelectorAll(".inv-checkbox");for(var i=0;i<cbs.length;i++){cbs[i].checked=c;var id=parseInt(cbs[i].getAttribute("data-id"));if(!isNaN(id)){if(c)selectedInvoices.add(id);else selectedInvoices.delete(id);}}updateSelectedCount();}
+function toggleSelect(id,checked){if(checked)selectedInvoices.add(id);else selectedInvoices.delete(id);updateSelectedCount();var all=document.querySelectorAll(".inv-checkbox");var ac=all.length>0;for(var i=0;i<all.length;i++){if(!all[i].checked){ac=false;break;}}var scb=document.getElementById("selectAllCheckbox");if(scb)scb.checked=ac;}
+function updateSelectedCount(){var el=document.getElementById("selectedCount");if(!el)return;var cnt=selectedInvoices.size;if(cnt>0){el.style.display="inline";el.textContent="已选 "+cnt+" 项";}else el.style.display="none";}
+
+// ============ 导出选中原件 ZIP ============
+async function exportOriginalsZip(){var ids=Array.from(selectedInvoices);if(!ids.length){showToast("请先勾选发票","warning");return;}showToast("下载 "+ids.length+" 个文件...","info");try{var zip=new JSZip();var {data:{session}}=await sb.auth.getSession();var token=session?session.access_token:SUPABASE_ANON_KEY;var down=0,fail=[];for(var invId of ids){var inv=allInvoices.find(function(i){return i.id===invId;});if(!inv||!inv.storage_path){fail.push("#"+invId);continue;}try{var res=await fetch(SUPABASE_URL+"/storage/v1/object/invoices/"+inv.storage_path,{headers:{apikey:SUPABASE_ANON_KEY,Authorization:"Bearer "+token}});if(!res.ok)throw new Error("HTTP "+res.status);var blob=await res.blob();var fn=inv.original_filename||(inv.invoice_number||"invoice")+"_"+inv.id;var base=fn.replace(/\.[^.]+$/,""),ext=fn.split(".").pop().toLowerCase();if(["pdf","png","jpg","jpeg","bmp"].indexOf(ext)===-1)ext="pdf";var zn=base+"."+ext,c=1;while(zip.file(zn)){zn=base+"_("+c+")."+ext;c++;}zip.file(zn,blob,{binary:true});down++;}catch(e){fail.push((inv.original_filename||"#"+invId)+": "+e.message);}}if(!down){showToast("下载失败","danger");return;}var zb=await zip.generateAsync({type:"blob"});var url=URL.createObjectURL(zb),a=document.createElement("a");a.href=url;a.download="ECS发票原件_"+new Date().toISOString().slice(0,10)+".zip";document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);var msg="✅ 已打包 "+down+" 个文件";if(fail.length)msg+=", "+fail.length+" 个失败";showToast(msg,down===ids.length?"success":"warning");}catch(e){showToast("打包失败: "+e.message,"danger");}}
+
 async function cleanupDuplicates() {
   if (!confirm('清理重复发票？同名同大小只保留最新。')) return;
   var {data} = await sb.from('invoices').select('id,original_filename,file_size,storage_path').order('created_at',{ascending:false});
@@ -589,14 +889,37 @@ async function cleanupDuplicates() {
 async function exportInvoices() {
   var {data} = await sb.from('invoices').select('*').order('invoice_date',{ascending:false});
   if (!data||!data.length) {showToast('暂无数据','warning');return;}
-  var detail=[['序号','发票号码','日期','商家','描述','金额','类目','地点','状态']];
+  // 明细 sheet（去掉描述列）
+  var detail=[['序号','发票号码','日期','商家','金额','类目','地点','状态']];
+  var totalAmt=0, catSum={}, statusSum={};
   data.forEach(function(inv,i){
     var cat=categories.find(function(c){return c.id===inv.category_id;});
-    detail.push([i+1,inv.invoice_number||'',inv.invoice_date||'',inv.seller_name||'',inv.item_description||'',inv.total_amount||0,(cat?cat.name:'未分类'),inv.project_location||'',inv.status==='approved'?'已通过':inv.status==='rejected'?'已驳回':'待审核']);
+    var catName=cat?cat.name:'未分类';
+    var amt=parseFloat(inv.total_amount||0);
+    detail.push([i+1,inv.invoice_number||'',inv.invoice_date||'',inv.seller_name||'',amt,catName,inv.project_location||'',inv.status==='approved'?'已通过':inv.status==='rejected'?'已驳回':'待审核']);
+    totalAmt+=amt;
+    catSum[catName]=(catSum[catName]||0)+amt;
+    statusSum[inv.status||'pending']=(statusSum[inv.status||'pending']||0)+amt;
+  });
+  // 汇总 sheet
+  var summary=[['项目','金额']];
+  summary.push(['发票总数',data.length]);
+  summary.push(['总金额','¥'+totalAmt.toFixed(2)]);
+  summary.push(['已通过','¥'+(statusSum['approved']||0).toFixed(2)]);
+  summary.push(['待审核','¥'+(statusSum['pending']||0).toFixed(2)]);
+  summary.push(['已驳回','¥'+(statusSum['rejected']||0).toFixed(2)]);
+  summary.push([]);
+  summary.push(['类目','金额']);
+  Object.entries(catSum).sort(function(a,b){return b[1]-a[1];}).forEach(function(e){
+    summary.push([e[0],'¥'+e[1].toFixed(2)]);
   });
   var wb=XLSX.utils.book_new();
-  var ws=XLSX.utils.aoa_to_sheet(detail);
-  XLSX.utils.book_append_sheet(wb,ws,'明细');
+  var ws1=XLSX.utils.aoa_to_sheet(detail);
+  ws1['!cols']=[{wch:6},{wch:14},{wch:12},{wch:18},{wch:12},{wch:10},{wch:10},{wch:8}];
+  XLSX.utils.book_append_sheet(wb,ws1,'明细');
+  var ws2=XLSX.utils.aoa_to_sheet(summary);
+  ws2['!cols']=[{wch:14},{wch:14}];
+  XLSX.utils.book_append_sheet(wb,ws2,'汇总');
   XLSX.writeFile(wb,'ECS报销_'+new Date().toISOString().slice(0,10)+'.xlsx');
   showToast('✅ 已导出','success');
 }
@@ -712,9 +1035,10 @@ async function loadAdminPanel() {
 
 async function loadAdminStats() {
   var now=new Date();
-  var {data}=await sb.from('invoices').select('uploaded_by,total_amount,status').gte('invoice_date',now.getFullYear()+'-01-01').lte('invoice_date',now.getFullYear()+'-12-31');
+  var {data,error}=await sb.from('invoices').select('uploaded_by,total_amount,status').gte('created_at',now.getFullYear()+'-01-01').lte('created_at',now.getFullYear()+'-12-31');
   var {data:profiles}=await sb.from('profiles').select('id,email,name');
-  if(!data) return;
+  if(error){var el=document.getElementById('adminStatsContent');if(el)el.innerHTML='<p class="text-danger">查询失败: '+error.message+'</p>';return;}
+  if(!data||!data.length){var el=document.getElementById('adminStatsContent');if(el)el.innerHTML='<p class="text-muted">本年度暂无发票数据</p>';return;}
   
   var stats={};
   data.forEach(function(inv){
