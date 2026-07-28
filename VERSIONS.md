@@ -1,6 +1,18 @@
 # ECS Expense System - Version History
 
-## v4.6 (2026-07-29) - 当前版本 ✅
+## v4.7 (2026-07-29) - 当前版本 ✅
+**改动**：添加财务类目功能，支持类目映射、筛选与汇总
+
+### 关键变更
+- schema/seed：`expense_categories` 新增 `financial_category` 列，含 mapping 种子数据
+- 类目管理：显示/编辑/新增「财务类目」字段，可选：办公费、差旅费、招待费、福利费、通讯费
+- 统计报表：新增「财务类目」筛选器，报表内显示财务类目汇总表
+- 导出报表：Excel 含财务类目列 + 财务类目汇总 sheet
+- 迁移脚本：`cloud/schema-financial-category.sql` 用于 Supabase 存量数据库迁移
+
+---
+
+## v4.6 (2026-07-29)
 **改动**：修复 storage_path 无效值的 400 错误，增加前置校验
 
 ### 关键变更
