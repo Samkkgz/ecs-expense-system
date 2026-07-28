@@ -1708,27 +1708,38 @@ async function init() {
       }
 
       // 1. 明细数据
-      var detailData = [['序号','发票号码','开票日期','商家名称','项目描述','金额','税额','价税合计','费用类目','地点','状态','备注']];
+      var detailData = [['序号','发票号码','开票日期','商家名称','项目描述','金额','税额','价税合计','费用类目','财务类目','地点','状态','备注']];
       data.forEach(function(inv, idx) {
         var cat = categories.find(function(c) { return c.id === inv.category_id; });
+        var finCatName = (cat && cat.financial_category) || '-';
         var st = inv.status === 'approved' ? '已通过' : inv.status === 'rejected' ? '已驳回' : '待审核';
         detailData.push([
           idx+1, inv.invoice_number || '', inv.invoice_date || '', inv.seller_name || '', inv.item_description || '',
-          inv.amount || 0, inv.tax_amount || 0, inv.total_amount || 0, (cat && cat.name) || '未分类',
+          inv.amount || 0, inv.tax_amount || 0, inv.total_amount || 0, (cat && cat.name) || '未分类', finCatName,
           inv.project_location || '', st, inv.expense_note || ''
         ]);
       });
 
       // 2. 类目汇总
-      var catTotals = {};
+      var catTotals = {}, finCatTotals = {};
       data.forEach(function(inv) {
         var cat = categories.find(function(c) { return c.id === inv.category_id; });
         var catName = (cat && cat.name) || '未分类';
         catTotals[catName] = (catTotals[catName] || 0) + parseFloat(inv.total_amount || 0);
+        if (cat && cat.financial_category) {
+          finCatTotals[cat.financial_category] = (finCatTotals[cat.financial_category] || 0) + parseFloat(inv.total_amount || 0);
+        } else {
+          finCatTotals['未归类'] = (finCatTotals['未归类'] || 0) + parseFloat(inv.total_amount || 0);
+        }
       });
       var summaryData = [['费用类目', '金额']];
       for (var key in catTotals) {
         summaryData.push([key, catTotals[key]]);
+      }
+      summaryData.push([]);
+      summaryData.push(['财务类目', '金额']);
+      for (var fk in finCatTotals) {
+        summaryData.push([fk, finCatTotals[fk]]);
       }
 
       // 3. 创建 Excel 工作簿
@@ -1736,7 +1747,7 @@ async function init() {
       
       // 明细工作表
       var ws1 = XLSX.utils.aoa_to_sheet(detailData);
-      ws1['!cols'] = [{wch:5},{wch:20},{wch:12},{wch:25},{wch:20},{wch:10},{wch:10},{wch:10},{wch:12},{wch:10},{wch:8},{wch:15}];
+      ws1['!cols'] = [{wch:5},{wch:20},{wch:12},{wch:25},{wch:20},{wch:10},{wch:10},{wch:10},{wch:12},{wch:12},{wch:10},{wch:8},{wch:15}];
       XLSX.utils.book_append_sheet(wb, ws1, '发票明细');
       
       // 汇总工作表

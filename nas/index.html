@@ -1058,15 +1058,18 @@ async function exportInvoices(exportAll) {
     if (!data.length) { showToast('勾选的发票数据异常','warning'); return; }
   }
   // 明细 sheet（去掉描述列）
-  var detail=[['序号','发票号码','日期','商家','金额','类目','地点','状态']];
-  var totalAmt=0, catSum={}, statusSum={};
+  var detail=[['序号','发票号码','日期','商家','金额','费用类目','财务类目','地点','状态']];
+  var totalAmt=0, catSum={}, statusSum={}, finCatSum={};
   data.forEach(function(inv,i){
     var cat=categories.find(function(c){return c.id===inv.category_id;});
     var catName=cat?cat.name:'未分类';
+    var finCatName=(cat&&cat.financial_category)?cat.financial_category:'-';
     var amt=parseFloat(inv.total_amount||0);
-    detail.push([i+1,inv.invoice_number||'',inv.invoice_date||'',inv.seller_name||'',amt,catName,inv.project_location||'',inv.status==='approved'?'已通过':inv.status==='rejected'?'已驳回':'待审核']);
+    detail.push([i+1,inv.invoice_number||'',inv.invoice_date||'',inv.seller_name||'',amt,catName,finCatName,inv.project_location||'',inv.status==='approved'?'已通过':inv.status==='rejected'?'已驳回':'待审核']);
     totalAmt+=amt;
     catSum[catName]=(catSum[catName]||0)+amt;
+    if(cat&&cat.financial_category) finCatSum[cat.financial_category]=(finCatSum[cat.financial_category]||0)+amt;
+    else finCatSum['\u672a\u5f52\u7c7b']=(finCatSum['\u672a\u5f52\u7c7b']||0)+amt;
     statusSum[inv.status||'pending']=(statusSum[inv.status||'pending']||0)+amt;
   });
   // 汇总 sheet
@@ -1082,9 +1085,14 @@ async function exportInvoices(exportAll) {
   Object.entries(catSum).sort(function(a,b){return b[1]-a[1];}).forEach(function(e){
     summary.push([e[0],'¥'+e[1].toFixed(2)]);
   });
+  summary.push([]);
+  summary.push(['财务类目','金额']);
+  Object.entries(finCatSum).sort(function(a,b){return b[1]-a[1];}).forEach(function(e){
+    summary.push([e[0],'¥'+e[1].toFixed(2)]);
+  });
   var wb=XLSX.utils.book_new();
   var ws1=XLSX.utils.aoa_to_sheet(detail);
-  ws1['!cols']=[{wch:6},{wch:14},{wch:12},{wch:18},{wch:12},{wch:10},{wch:10},{wch:8}];
+  ws1['!cols']=[{wch:6},{wch:14},{wch:12},{wch:18},{wch:12},{wch:10},{wch:12},{wch:10},{wch:8}];
   XLSX.utils.book_append_sheet(wb,ws1,'明细');
   var ws2=XLSX.utils.aoa_to_sheet(summary);
   ws2['!cols']=[{wch:14},{wch:14}];
