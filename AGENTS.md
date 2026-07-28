@@ -1,5 +1,8 @@
 # ECS-Expanse-System — 开发规范
 
+> ⚠️ 任务启动：请使用 `[DEV]` 前缀 + 版本标识，如 `[DEV] ECS 报销系统：修复 NAS 版 OCR`
+
+
 ## 项目结构（两套代码严格分离）
 
 ```
@@ -40,6 +43,19 @@ ECS-Expanse-System/
 | 修改 NAS 版前端 | `nas/index.html` | 复制 nas/ 到 NAS → `docker compose up -d` |
 | 修改 NAS 容器配置 | `nas/docker-compose.yml` | 同上 |
 | 修改 NAS 版 OCR | `nas/ocr-service/` | 同上 |
+
+## 版本号管理
+- 项目版本号统一在 VERSIONS.md 中维护，入口文件（cloud/index.html、nas/index.html）头部标注当前版本号
+- 遵循语义化版本规范（major.minor.patch）：
+  - 产品功能变更 → 递增次版本号（minor）
+  - Bug 修复/小优化 → 递增补丁版本号（patch）
+  - 重大架构变更 → 递增主版本号（major）
+- 每次发布前必须递增版本号，确保所有发布可追溯
+
+## 修改前备份（强制执行）
+- **任何代码修改前，必须先做完整备份**：git commit 提交当前版本 + NAS 全量备份（scripts/nas-backup.sh）
+- 备份完成后标注当前版本号（Git commit hash 或版本标签），后续修改方可进行
+- 涉及 NAS 部署的修改，需额外确认 NAS 上运行版本已通过 Git commit 记录
 
 ## 注意
 - NAS 版当前版本 v4.5（OCR 纯 stdlib，5 容器，named volumes）

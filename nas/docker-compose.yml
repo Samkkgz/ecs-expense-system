@@ -87,9 +87,8 @@ services:
     image: python:3.12-slim
     container_name: ecs-ocr
     restart: always
-    dns:
-      - 8.8.8.8
-      - 114.114.114.114
+      # - 8.8.8.8
+      # - 114.114.114.114
     command: python /app/app.py
     environment:
       BAIDU_API_KEY: "8dkGx67xX1Ht1pOghMemQJJ2"

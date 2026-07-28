@@ -164,11 +164,94 @@ CREATE TABLE IF NOT EXISTS public.profiles (
 );
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 
+-- ============ v3.0 多公司 + 用户管理 ============
+CREATE TABLE IF NOT EXISTS public.companies (
+    id BIGSERIAL PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    short_name TEXT,
+    sort_order INTEGER DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE public.companies ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE IF NOT EXISTS public.user_companies (
+    user_id UUID NOT NULL,
+    company_id BIGINT NOT NULL REFERENCES public.companies(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (user_id, company_id)
+);
+ALTER TABLE public.user_companies ENABLE ROW LEVEL SECURITY;
+
+-- v3.0 ADD COLUMN company_id（放在 companies 表创建之后）
+ALTER TABLE public.invoices ADD COLUMN IF NOT EXISTS company_id BIGINT REFERENCES public.companies(id);
+CREATE INDEX IF NOT EXISTS idx_invoices_company ON public.invoices(company_id);
+ALTER TABLE public.expense_reports ADD COLUMN IF NOT EXISTS company_id BIGINT REFERENCES public.companies(id);
+
 -- ============ RLS 策略 ============
-CREATE POLICY "authenticated_all" ON public.expense_categories FOR ALL USING (auth.role() IN ('authenticated','service_role'));
-CREATE POLICY "authenticated_all" ON public.invoices FOR ALL USING (auth.role() IN ('authenticated','service_role'));
-CREATE POLICY "authenticated_all" ON public.expense_reports FOR ALL USING (auth.role() IN ('authenticated','service_role'));
-CREATE POLICY "authenticated_all" ON public.profiles FOR ALL USING (auth.role() IN ('authenticated','service_role'));
+DROP POLICY IF EXISTS "authenticated_all" ON public.expense_categories;
+DROP POLICY IF EXISTS "authenticated_all" ON public.invoices;
+DROP POLICY IF EXISTS "authenticated_all" ON public.expense_reports;
+DROP POLICY IF EXISTS "authenticated_all" ON public.profiles;
+
+-- 费用类目：全员可读写（全局共享）
+CREATE POLICY "categories_all" ON public.expense_categories
+  FOR ALL USING (auth.role() IN ('authenticated','service_role'));
+
+-- companies：全员可读，super_admin 可写
+CREATE POLICY "companies_read" ON public.companies
+  FOR SELECT USING (auth.role() = 'authenticated');
+CREATE POLICY "companies_write" ON public.companies
+  FOR ALL USING (auth.uid() IN (SELECT id FROM public.profiles WHERE role = 'super_admin'));
+
+-- user_companies：本用户可读，super_admin/admin 可写
+CREATE POLICY "user_companies_read" ON public.user_companies
+  FOR SELECT USING (
+    auth.uid() = user_id
+    OR auth.uid() IN (SELECT id FROM public.profiles WHERE role IN ('super_admin','admin'))
+  );
+CREATE POLICY "user_companies_write" ON public.user_companies
+  FOR ALL USING (
+    auth.uid() IN (SELECT id FROM public.profiles WHERE role IN ('super_admin','admin'))
+  );
+
+-- invoices：用户只看自己关联公司的，super_admin/service_role 看全部
+CREATE POLICY "invoices_select" ON public.invoices FOR SELECT USING (
+  auth.role() = 'service_role'
+  OR auth.uid() IN (SELECT id FROM public.profiles WHERE role = 'super_admin')
+  OR company_id IN (SELECT company_id FROM public.user_companies WHERE user_id = auth.uid())
+);
+CREATE POLICY "invoices_insert" ON public.invoices FOR INSERT WITH CHECK (
+  auth.role() = 'service_role'
+  OR auth.uid() IN (SELECT id FROM public.profiles WHERE role = 'super_admin')
+  OR company_id IN (SELECT company_id FROM public.user_companies WHERE user_id = auth.uid())
+);
+CREATE POLICY "invoices_update" ON public.invoices FOR UPDATE USING (
+  auth.role() = 'service_role'
+  OR
+  auth.uid() IN (SELECT id FROM public.profiles WHERE role IN ('admin','super_admin'))
+);
+CREATE POLICY "invoices_delete" ON public.invoices FOR DELETE USING (
+  auth.role() = 'service_role'
+  OR
+  auth.uid() IN (SELECT id FROM public.profiles WHERE role IN ('admin','super_admin'))
+);
+
+-- expense_reports：同 invoices
+CREATE POLICY "reports_select" ON public.expense_reports FOR SELECT USING (
+  auth.role() = 'service_role'
+  OR auth.uid() IN (SELECT id FROM public.profiles WHERE role = 'super_admin')
+  OR company_id IN (SELECT company_id FROM public.user_companies WHERE user_id = auth.uid())
+);
+CREATE POLICY "reports_write" ON public.expense_reports FOR ALL USING (
+  auth.role() = 'service_role'
+  OR auth.uid() IN (SELECT id FROM public.profiles WHERE role IN ('super_admin','admin'))
+);
+
+-- profiles：全员可读，super_admin/admin 可写
+CREATE POLICY "profiles_read" ON public.profiles FOR SELECT USING (auth.role() = 'authenticated');
+CREATE POLICY "profiles_write" ON public.profiles FOR ALL USING (
+  auth.uid() IN (SELECT id FROM public.profiles WHERE role IN ('super_admin','admin'))
+);
 
 -- ============ 表权限 ============
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.expense_categories TO authenticated, service_role;
@@ -177,53 +260,97 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON public.expense_reports TO authenticated,
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.profiles TO authenticated, service_role;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO authenticated, service_role;
 
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.companies TO authenticated, service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.user_companies TO authenticated, service_role;
+
 -- ============ RPC 函数 ============
-CREATE OR REPLACE FUNCTION public.refresh_expense_report(p_type TEXT, p_key TEXT)
+CREATE OR REPLACE FUNCTION public.refresh_expense_report(p_type TEXT, p_key TEXT, p_company_id BIGINT DEFAULT NULL)
 RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE v_total DECIMAL(14,2); v_count INTEGER; v_breakdown JSONB;
 BEGIN
   IF p_type='monthly' THEN
     SELECT COALESCE(SUM(total_amount),0),COUNT(*) INTO v_total,v_count
-    FROM public.invoices WHERE TO_CHAR(invoice_date,'YYYY-MM')=p_key AND status='approved';
+    FROM public.invoices WHERE TO_CHAR(invoice_date,'YYYY-MM')=p_key AND status='approved'
+      AND (p_company_id IS NULL OR company_id=p_company_id);
     SELECT JSONB_OBJECT_AGG(c.name, sub.amt) INTO v_breakdown
     FROM (SELECT c.name,COALESCE(SUM(i.total_amount),0) amt
           FROM public.invoices i JOIN public.expense_categories c ON i.category_id=c.id
           WHERE TO_CHAR(i.invoice_date,'YYYY-MM')=p_key AND i.status='approved'
+            AND (p_company_id IS NULL OR i.company_id=p_company_id)
           GROUP BY c.name) sub;
   ELSIF p_type='quarterly' THEN
     SELECT COALESCE(SUM(total_amount),0),COUNT(*) INTO v_total,v_count
     FROM public.invoices
     WHERE EXTRACT(YEAR FROM invoice_date)=SPLIT_PART(p_key,'-',1)::INT
       AND CEIL(EXTRACT(MONTH FROM invoice_date)/3.0)=SPLIT_PART(p_key,'-',2)::INT
-      AND status='approved';
+      AND status='approved'
+      AND (p_company_id IS NULL OR company_id=p_company_id);
+    SELECT JSONB_OBJECT_AGG(c.name, sub.amt) INTO v_breakdown
+    FROM (SELECT c.name,COALESCE(SUM(i.total_amount),0) amt
+          FROM public.invoices i JOIN public.expense_categories c ON i.category_id=c.id
+          WHERE EXTRACT(YEAR FROM i.invoice_date)=SPLIT_PART(p_key,'-',1)::INT
+            AND CEIL(EXTRACT(MONTH FROM i.invoice_date)/3.0)=SPLIT_PART(p_key,'-',2)::INT
+            AND i.status='approved'
+            AND (p_company_id IS NULL OR i.company_id=p_company_id)
+          GROUP BY c.name) sub;
   ELSE
     SELECT COALESCE(SUM(total_amount),0),COUNT(*) INTO v_total,v_count
-    FROM public.invoices WHERE EXTRACT(YEAR FROM invoice_date)=p_key::INT AND status='approved';
+    FROM public.invoices WHERE EXTRACT(YEAR FROM invoice_date)=p_key::INT AND status='approved'
+      AND (p_company_id IS NULL OR company_id=p_company_id);
     SELECT JSONB_OBJECT_AGG(c.name, sub.amt) INTO v_breakdown
     FROM (SELECT c.name,COALESCE(SUM(i.total_amount),0) amt
           FROM public.invoices i JOIN public.expense_categories c ON i.category_id=c.id
           WHERE EXTRACT(YEAR FROM i.invoice_date)=p_key::INT AND i.status='approved'
+            AND (p_company_id IS NULL OR i.company_id=p_company_id)
           GROUP BY c.name) sub;
   END IF;
-  INSERT INTO public.expense_reports(report_type,period_key,total_amount,invoice_count,category_breakdown)
-  VALUES(p_type,p_key,v_total,v_count,v_breakdown)
-  ON CONFLICT(report_type,period_key) DO UPDATE
+  INSERT INTO public.expense_reports(report_type,period_key,total_amount,invoice_count,category_breakdown,company_id)
+  VALUES(p_type,p_key,v_total,v_count,v_breakdown,p_company_id)
+  ON CONFLICT(report_type,period_key,company_id) DO UPDATE
   SET total_amount=EXCLUDED.total_amount,invoice_count=EXCLUDED.invoice_count,
       category_breakdown=EXCLUDED.category_breakdown,generated_at=NOW();
   RETURN JSONB_BUILD_OBJECT('type',p_type,'period',p_key,'total',v_total,'count',v_count,'breakdown',v_breakdown);
 END; $$;
 
-CREATE OR REPLACE FUNCTION public.insert_invoice(storage_path TEXT, original_filename TEXT, file_size INTEGER, invoice_date TEXT DEFAULT NULL, category_id BIGINT DEFAULT NULL, project_location TEXT DEFAULT NULL, uploaded_by UUID DEFAULT NULL, status TEXT DEFAULT 'pending')
+-- v3.0 管理员批量设置用户公司归属
+CREATE OR REPLACE FUNCTION public.admin_assign_user_companies(
+  p_user_id UUID, p_company_ids BIGINT[]
+)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN
+  DELETE FROM public.user_companies WHERE user_id = p_user_id;
+  INSERT INTO public.user_companies (user_id, company_id)
+  SELECT p_user_id, unnest(p_company_ids);
+END; $$;
+
+CREATE OR REPLACE FUNCTION public.insert_invoice(storage_path TEXT, original_filename TEXT, file_size INTEGER, invoice_date TEXT DEFAULT NULL, category_id BIGINT DEFAULT NULL, project_location TEXT DEFAULT NULL, uploaded_by UUID DEFAULT NULL, status TEXT DEFAULT 'pending', p_company_id BIGINT DEFAULT NULL)
 RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE
   v_date DATE;
+  v_company_id BIGINT;
 BEGIN
   v_date := COALESCE(invoice_date::DATE, CURRENT_DATE);
-  INSERT INTO public.invoices(storage_path,original_filename,file_size,category_id,project_location,uploaded_by,status,invoice_date)
-  VALUES(storage_path,original_filename,file_size,category_id,project_location,uploaded_by,status,v_date);
+  v_company_id := COALESCE(p_company_id, 1);
+  INSERT INTO public.invoices(storage_path,original_filename,file_size,category_id,project_location,uploaded_by,status,invoice_date,company_id)
+  VALUES(storage_path,original_filename,file_size,category_id,project_location,uploaded_by,status,v_date,v_company_id);
   RETURN JSONB_BUILD_OBJECT('success',true);
 END; $$;
 
+-- v3.0 管理员批量设置用户公司归属
+END; $$;
+
+
+
+-- 删除发票 RPC（SECURITY DEFINER 绕过 RLS）
+-- 同时操作用户不能直接 DELETE 的 storage 清理由前端完成
+CREATE OR REPLACE FUNCTION public.delete_invoice(p_id BIGINT)
+RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER AS $$
+DECLARE v_storage_path TEXT;
+BEGIN
+  SELECT storage_path INTO v_storage_path FROM public.invoices WHERE id = p_id;
+  DELETE FROM public.invoices WHERE id = p_id;
+  RETURN JSONB_BUILD_OBJECT('success', true, 'storage_path', v_storage_path);
+END; $$;
 CREATE OR REPLACE FUNCTION public.admin_create_profile(p_id UUID, p_email TEXT, p_name TEXT, p_role TEXT)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
 BEGIN
@@ -248,3 +375,23 @@ INSERT INTO public.expense_categories (name, description, sort_order) VALUES
   ('通讯费','手机话费等通讯支出',7),
   ('外出交通费','本地外出交通支出',8)
 ON CONFLICT (name) DO NOTHING;
+
+-- v3.0 公司种子数据
+INSERT INTO public.companies (name, short_name, sort_order) VALUES
+  ('广州逸创网络有限公司', '逸创网络', 1),
+  ('广州逸创奥网络科技有限公司', '逸创奥', 2)
+ON CONFLICT (name) DO NOTHING;
+
+-- v3.0 迁移：已有数据归入第一家
+UPDATE public.invoices SET company_id = 1 WHERE company_id IS NULL;
+UPDATE public.expense_reports SET company_id = 1 WHERE company_id IS NULL;
+
+-- v3.0 更新 NOT NULL + 唯一约束
+ALTER TABLE public.invoices ALTER COLUMN company_id SET NOT NULL;
+ALTER TABLE public.expense_reports ALTER COLUMN company_id SET NOT NULL;
+ALTER TABLE public.expense_reports DROP CONSTRAINT IF EXISTS expense_reports_report_type_period_key;
+ALTER TABLE public.expense_reports ADD UNIQUE (report_type, period_key, company_id);
+
+-- v3.0 唯一索引：同名同大小同公司视为重复
+DROP INDEX IF EXISTS uq_invoices_filename_size;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_invoices_filename_size_company ON public.invoices (original_filename, file_size, company_id);
