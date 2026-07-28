@@ -1,6 +1,16 @@
 # ECS Expense System - Version History
 
-## v4.5 (2026-06-14) - 当前版本 ✅
+## v4.6 (2026-07-29) - 当前版本 ✅
+**改动**：修复 storage_path 无效值的 400 错误，增加前置校验
+
+### 关键变更
+- `loadPreview()` & `ocrInvoice()` in nas/index.html：加 `storage_path` 非空/长度校验，预览失败友好提示
+- `editInvoice()` & `ocrInvoice()` in cloud/index.html：加 `hasFile` 条件判断，空路径时显示"暂无文件"而非发送 400 请求
+- 统一前端文件预览/OCR/删除/导出等操作对 `storage_path` 的防御性校验
+
+---
+
+## v4.5 (2026-06-14)
 **改动**：OCR 纯 stdlib（无 pip 依赖）+ 健康检查 + 错误传播
 
 ### 架构
