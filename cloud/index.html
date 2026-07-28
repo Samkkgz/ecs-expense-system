@@ -279,10 +279,11 @@
             <li class="nav-item"><button class="nav-link" data-period="annual" onclick="switchReport('annual')">年度报表</button></li>
           </ul>
           <div class="report-actions mb-3">
-            <select id="reportYearSelector" class="form-select form-select-sm" style="width:auto"></select>
-            <select id="reportPeriodSelector" class="form-select form-select-sm" style="width:auto" onchange="loadReportData()"></select>
-            <select id="reportUserSelector" class="form-select form-select-sm" style="width:auto;display:none" onchange="loadReportData()"></select>
-            <button class="btn btn-primary btn-sm" onclick="refreshReport()"><i class="bi bi-arrow-clockwise"></i> 刷新</button>
+           <select id="reportYearSelector" class="form-select form-select-sm" style="width:auto"></select>
+           <select id="reportPeriodSelector" class="form-select form-select-sm" style="width:auto" onchange="loadReportData()"></select>
+           <select id="reportUserSelector" class="form-select form-select-sm" style="width:auto;display:none" onchange="loadReportData()"></select>
+            <select id="reportFinCatSelector" class="form-select form-select-sm" style="width:auto;display:none" onchange="loadReportData()"></select>
+           <button class="btn btn-primary btn-sm" onclick="refreshReport()"><i class="bi bi-arrow-clockwise"></i> 刷新</button>
             <button class="btn btn-success btn-sm" onclick="exportReport()"><i class="bi bi-file-earmark-excel"></i> 导出报表</button>
           </div>
           <div id="reportContent"></div>
@@ -549,15 +550,25 @@ async function init() {
     const { data } = await sb.from('expense_categories').select('*').order('sort_order');
     if (data) {
       categories = data;
-      const selects = ['uploadCategory', 'filterCategory'];
+      const selects = ['uploadCategory', 'filterCategory', 'reportFinCatSelector'];
       selects.forEach(id => {
         const sel = document.getElementById(id);
         if (!sel) return;
         const currentVal = sel.value;
-        sel.innerHTML = id === 'uploadCategory' ? '<option value="">自动识别</option>' : '<option value="">全部类目</option>';
-        data.forEach(c => {
-          sel.innerHTML += `<option value="${c.id}">${c.name}</option>`;
-        });
+        if (id === 'reportFinCatSelector') {
+          // Populate with unique financial categories
+          const finCats = [...new Set(data.map(c => c.financial_category).filter(Boolean))];
+          sel.innerHTML = '<option value="">全部财务类目</option>';
+          finCats.forEach(fc => {
+            sel.innerHTML += `<option value="${fc}">${fc}</option>`;
+          });
+          sel.style.display = finCats.length ? 'inline-block' : 'none';
+        } else {
+          sel.innerHTML = id === 'uploadCategory' ? '<option value="">自动识别</option>' : '<option value="">全部类目</option>';
+          data.forEach(c => {
+            sel.innerHTML += `<option value="${c.id}">${c.name}</option>`;
+          });
+        }
         sel.value = currentVal;
       });
     }
@@ -1801,6 +1812,15 @@ async function init() {
     
     var { data: invoices } = await query;
     
+    // 财务类目筛选
+    var finCatFilter = document.getElementById('reportFinCatSelector').value;
+    if (finCatFilter) {
+      invoices = invoices.filter(function(inv) {
+        var cat = categories.find(function(c) { return c.id === inv.category_id; });
+        return cat && cat.financial_category === finCatFilter;
+      });
+    }
+    
     if (!invoices || invoices.length === 0) {
       renderReport(null, reportType, periodKey);
       return;
@@ -1811,18 +1831,30 @@ async function init() {
     
     // 按类目统计
     var cats = {};
+    var finCats = {};
     for (var inv of invoices) {
       var catName = '未分类';
       var cat = categories.find(function(c) { return c.id === inv.category_id; });
       if (cat) catName = cat.name;
       cats[catName] = (cats[catName] || 0) + parseFloat(inv.total_amount || 0);
+      if (cat && cat.financial_category) {
+        finCats[cat.financial_category] = (finCats[cat.financial_category] || 0) + parseFloat(inv.total_amount || 0);
+      }
     }
     
-    var report = { total_amount: total, invoice_count: count, category_breakdown: cats };
-    renderReport(report, reportType, periodKey);
+    // 未映射财务类目的归入"未归类"
+    for (var inv of invoices) {
+      var cat = categories.find(function(c) { return c.id === inv.category_id; });
+      if (!cat || !cat.financial_category) {
+        finCats['未归类'] = (finCats['未归类'] || 0) + parseFloat(inv.total_amount || 0);
+      }
+    }
+    
+    var report = { total_amount: total, invoice_count: count, category_breakdown: cats, financial_breakdown: finCats };
+    renderReport(report, reportType, periodKey, finCats);
   }
 
-  function renderReport(report, type, key) {
+  function renderReport(report, type, key, finCats) {
     const container = document.getElementById('reportContent');
     if (!report) {
       container.innerHTML = '<p class="text-muted">暂无数据</p>';
@@ -1872,6 +1904,24 @@ async function init() {
       });
       html += `</tbody></table></div></div>`;
     }
+    
+    // 财务类目汇总
+    if (finCats && Object.keys(finCats).length > 0) {
+      html += `<div class="section-card"><h5>财务类目汇总</h5>
+        <div class="table-responsive"><table class="table">
+          <thead><tr><th>财务类目</th><th>金额</th><th>占比</th></tr></thead>
+          <tbody>`;
+      const finSorted = Object.entries(finCats).sort(function(a, b) { return b[1] - a[1]; });
+      finSorted.forEach(function(entry) {
+        var fcName = entry[0];
+        var fcAmt = entry[1];
+        var pct = total > 0 ? ((fcAmt / total) * 100).toFixed(1) : 0;
+        html += '<tr><td><strong>' + fcName + '</strong></td><td>¥' + parseFloat(fcAmt).toFixed(2) + '</td><td>' +
+          '<div class="progress" style="height:6px"><div class="progress-bar bg-info" style="width:' + pct + '%"></div></div>' +
+          '<small>' + pct + '%</small></td></tr>';
+      });
+      html += '</tbody></table></div></div>';
+    }
 
     container.innerHTML = html;
   }
@@ -1915,30 +1965,41 @@ async function init() {
     if (!invoices) invoices = [];
 
     // 构建 Excel
-    var detailData = [['序号','发票号码','开票日期','商家名称','项目描述','金额','税额','价税合计','费用类目','地点','备注']];
+    var detailData = [['序号','发票号码','开票日期','商家名称','项目描述','金额','税额','价税合计','费用类目','财务类目','地点','备注']];
     invoices.forEach(function(inv, idx) {
       var cat = categories.find(function(c) { return c.id === inv.category_id; });
+      var finCatName = (cat && cat.financial_category) || '-';
       detailData.push([
         idx+1, inv.invoice_number || '', inv.invoice_date || '', inv.seller_name || '', inv.item_description || '',
-        inv.amount || 0, inv.tax_amount || 0, inv.total_amount || 0, (cat && cat.name) || '未分类',
+        inv.amount || 0, inv.tax_amount || 0, inv.total_amount || 0, (cat && cat.name) || '未分类', finCatName,
         inv.project_location || '', inv.expense_note || ''
       ]);
     });
 
-    var catTotals = {};
+    var catTotals = {}, finCatTotals = {};
     invoices.forEach(function(inv) {
       var cat = categories.find(function(c) { return c.id === inv.category_id; });
       var catName = (cat && cat.name) || '未分类';
       catTotals[catName] = (catTotals[catName] || 0) + parseFloat(inv.total_amount || 0);
+      if (cat && cat.financial_category) {
+        finCatTotals[cat.financial_category] = (finCatTotals[cat.financial_category] || 0) + parseFloat(inv.total_amount || 0);
+      } else {
+        finCatTotals['未归类'] = (finCatTotals['未归类'] || 0) + parseFloat(inv.total_amount || 0);
+      }
     });
     var summaryData = [['费用类目', '金额']];
     for (var key in catTotals) summaryData.push([key, catTotals[key]]);
     var grandTotal = invoices.reduce(function(s, inv) { return s + parseFloat(inv.total_amount || 0); }, 0);
     summaryData.push(['总计', grandTotal]);
+    // Add financial category summary
+    summaryData.push([]);
+    summaryData.push(['财务类目', '金额']);
+    for (var fk in finCatTotals) summaryData.push([fk, finCatTotals[fk]]);
+    summaryData.push(['总计', grandTotal]);
 
     var wb = XLSX.utils.book_new();
     var ws1 = XLSX.utils.aoa_to_sheet(detailData);
-    ws1['!cols'] = [{wch:5},{wch:20},{wch:12},{wch:25},{wch:20},{wch:10},{wch:10},{wch:10},{wch:12},{wch:10},{wch:15}];
+    ws1['!cols'] = [{wch:5},{wch:20},{wch:12},{wch:25},{wch:20},{wch:10},{wch:10},{wch:10},{wch:12},{wch:12},{wch:10},{wch:15}];
     XLSX.utils.book_append_sheet(wb, ws1, '报表明细');
     var ws2 = XLSX.utils.aoa_to_sheet(summaryData);
     ws2['!cols'] = [{wch:20},{wch:12}];
@@ -1967,11 +2028,19 @@ async function init() {
     container.innerHTML = `
       <div class="table-responsive">
         <table class="table">
-          <thead><tr><th>排序</th><th>名称</th><th>描述</th><th>操作</th></tr></thead>
+          <thead><tr><th>排序</th><th>名称</th><th>财务类目</th><th>描述</th><th>操作</th></tr></thead>
           <tbody>
             ${data.map(c => `<tr>
               <td><input type="number" class="form-control form-control-sm" style="width:60px" value="${c.sort_order}" id="sort_${c.id}"></td>
               <td><input class="form-control form-control-sm" value="${c.name}" id="name_${c.id}"></td>
+              <td><select class="form-select form-select-sm" id="finCat_${c.id}">
+                <option value="">-</option>
+                <option value="办公费" ${c.financial_category === '办公费' ? 'selected' : ''}>办公费</option>
+                <option value="差旅费" ${c.financial_category === '差旅费' ? 'selected' : ''}>差旅费</option>
+                <option value="招待费" ${c.financial_category === '招待费' ? 'selected' : ''}>招待费</option>
+                <option value="福利费" ${c.financial_category === '福利费' ? 'selected' : ''}>福利费</option>
+                <option value="通讯费" ${c.financial_category === '通讯费' ? 'selected' : ''}>通讯费</option>
+              </select></td>
               <td><input class="form-control form-control-sm" value="${c.description || ''}" id="desc_${c.id}"></td>
               <td>
                 <button class="btn btn-sm btn-outline-primary" onclick="updateCategory(${c.id})"><i class="bi bi-save"></i></button>
@@ -1984,7 +2053,17 @@ async function init() {
       <h6>添加新类目</h6>
       <div class="row g-2">
         <div class="col-md-3"><input class="form-control" id="newCatName" placeholder="类目名称"></div>
-        <div class="col-md-5"><input class="form-control" id="newCatDesc" placeholder="描述（可选）"></div>
+        <div class="col-md-2">
+          <select class="form-select" id="newCatFinCat">
+            <option value="">财务类目</option>
+            <option value="办公费">办公费</option>
+            <option value="差旅费">差旅费</option>
+            <option value="招待费">招待费</option>
+            <option value="福利费">福利费</option>
+            <option value="通讯费">通讯费</option>
+          </select>
+        </div>
+        <div class="col-md-3"><input class="form-control" id="newCatDesc" placeholder="描述（可选）"></div>
         <div class="col-md-2"><input class="form-control" id="newCatSort" type="number" placeholder="排序" value="99"></div>
         <div class="col-md-2"><button class="btn btn-primary w-100" onclick="addCategory()">添加</button></div>
       </div>
@@ -1995,9 +2074,10 @@ async function init() {
     const name = document.getElementById(`name_${id}`).value.trim();
     const description = document.getElementById(`desc_${id}`).value.trim();
     const sort_order = parseInt(document.getElementById(`sort_${id}`).value) || 0;
+    const financial_category = document.getElementById(`finCat_${id}`).value || null;
     if (!name) return showToast('类目名称不能为空', 'warning');
 
-    const { error } = await sb.from('expense_categories').update({ name, description, sort_order }).eq('id', id);
+    const { error } = await sb.from('expense_categories').update({ name, description, sort_order, financial_category }).eq('id', id);
     if (error) showToast('更新失败: ' + error.message, 'danger');
     else { showToast('✅ 更新成功', 'success'); loadCategoryManagement(); }
   }
@@ -2006,9 +2086,10 @@ async function init() {
     const name = document.getElementById('newCatName').value.trim();
     const description = document.getElementById('newCatDesc').value.trim();
     const sort_order = parseInt(document.getElementById('newCatSort').value) || 99;
+    const financial_category = document.getElementById('newCatFinCat').value || null;
     if (!name) return showToast('请输入类目名称', 'warning');
 
-    const { error } = await sb.from('expense_categories').insert({ name, description, sort_order });
+    const { error } = await sb.from('expense_categories').insert({ name, description, sort_order, financial_category });
     if (error) showToast('添加失败: ' + error.message, 'danger');
     else { showToast('✅ 添加成功', 'success'); loadCategoryManagement(); loadCategories(); }
   }

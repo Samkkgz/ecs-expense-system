@@ -157,10 +157,11 @@
           <li class="nav-item"><button class="nav-link" data-period="annual">年度</button></li>
         </ul>
         <div class="filter-bar">
-          <select id="reportYearSelector"></select>
-          <select id="reportPeriodSelector"></select>
-          <select id="reportUserSelector" style="display:none"></select>
-          <button class="btn btn-sm btn-primary" onclick="refreshReport()">刷新</button>
+         <select id="reportYearSelector"></select>
+         <select id="reportPeriodSelector"></select>
+         <select id="reportUserSelector" style="display:none"></select>
+          <select id="reportFinCatSelector" style="display:none"></select>
+         <button class="btn btn-sm btn-primary" onclick="refreshReport()">刷新</button>
           <button class="btn btn-sm btn-success" onclick="exportReport()">导出</button>
         </div>
         <div id="reportContent"></div>
@@ -440,11 +441,18 @@ async function loadCategories() {
   var {data} = await sb.from('expense_categories').select('*').order('sort_order');
   if (data) {
     categories = data;
-    ['uploadCategory','filterCategory'].forEach(function(id){
+    ['uploadCategory','filterCategory','reportFinCatSelector'].forEach(function(id){
       var sel = document.getElementById(id);
       if (!sel) return;
       var v = sel.value;
-      sel.innerHTML = (id==='uploadCategory'?'<option value="">自动识别</option>':'<option value="">全部类目</option>') + data.map(function(c){return '<option value="'+c.id+'">'+c.name+'</option>';}).join('');
+      if (id === 'reportFinCatSelector') {
+        var finCats = [];
+        data.forEach(function(c){if(c.financial_category && finCats.indexOf(c.financial_category)===-1) finCats.push(c.financial_category);});
+        sel.innerHTML = '<option value="">全部财务类目</option>' + finCats.map(function(fc){return '<option value="'+fc+'">'+fc+'</option>';}).join('');
+        sel.style.display = finCats.length ? 'inline-block' : 'none';
+      } else {
+        sel.innerHTML = (id==='uploadCategory'?'<option value="">自动识别</option>':'<option value="">全部类目</option>') + data.map(function(c){return '<option value="'+c.id+'">'+c.name+'</option>';}).join('');
+      }
       sel.value = v;
     });
   }

@@ -7,6 +7,7 @@
 CREATE TABLE IF NOT EXISTS expense_categories (
   id BIGSERIAL PRIMARY KEY,
   name TEXT NOT NULL UNIQUE,        -- e.g. 办公用品, 出差餐饮费
+  financial_category TEXT,          -- e.g. 办公费, 差旅费, 招待费
   description TEXT,
   sort_order INTEGER DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT NOW()

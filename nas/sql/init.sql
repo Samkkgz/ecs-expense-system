@@ -117,6 +117,7 @@ CREATE POLICY "service_all_objects" ON storage.objects FOR ALL USING (auth.role(
 CREATE TABLE IF NOT EXISTS public.expense_categories (
     id BIGSERIAL PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
+    financial_category TEXT,
     description TEXT,
     sort_order INTEGER DEFAULT 0,
     created_at TIMESTAMPTZ DEFAULT NOW()
@@ -365,15 +366,16 @@ BEGIN
 END; $$;
 
 -- ============ 默认数据 ============
-INSERT INTO public.expense_categories (name, description, sort_order) VALUES
-  ('办公用品','办公用品采购',1),
-  ('出差餐饮费','出差期间的餐饮支出',2),
-  ('出差交通费','出差交通支出',3),
-  ('出差住房费','出差住宿支出',4),
-  ('客情餐饮费','客情关系维护餐饮支出',5),
-  ('日常餐饮费','日常团队餐饮支出',6),
-  ('通讯费','手机话费等通讯支出',7),
-  ('外出交通费','本地外出交通支出',8)
+INSERT INTO public.expense_categories (name, financial_category, description, sort_order) VALUES
+  ('办公用品','办公费','办公用品采购',1),
+  ('出差餐饮费','差旅费','出差期间的餐饮支出',2),
+  ('出差交通费','差旅费','出差交通支出',3),
+  ('出差住房费','差旅费','出差住宿支出',4),
+  ('客情餐饮费','招待费','客情关系维护餐饮支出',5),
+  ('日常餐饮费','福利费','日常团队餐饮支出',6),
+  ('通讯费','通讯费','手机话费等通讯支出',7),
+  ('外出交通费','差旅费','本地外出交通支出',8),
+  ('商务应酬','招待费','商务招待及应酬支出',9)
 ON CONFLICT (name) DO NOTHING;
 
 -- v3.0 公司种子数据
