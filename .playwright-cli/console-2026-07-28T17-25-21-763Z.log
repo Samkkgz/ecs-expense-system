@@ -1,0 +1,3 @@
+[    2570ms] [LOG] [ECS] Page loaded at 2026-07-28T17:25:24.332Z @ http://192.168.3.150:18000/:1474
+[    2571ms] [VERBOSE] [DOM] Password field is not contained in a form: (More info: https://goo.gl/9p2vKq) %o @ http://192.168.3.150:18000/:0
+[    4718ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://192.168.3.150:18000/favicon.ico:0
