@@ -1184,4 +1184,5 @@ if __name__ == "__main__":
     import signal
     signal.signal(signal.SIGTERM, _signal_handler)
     signal.signal(signal.SIGINT, _signal_handler)
+    main()
 
