@@ -61,3 +61,21 @@
 
 ## v1 — Supabase Cloud
 - supabase.com 云服务
+
+# v4.8 (2026-07-30) - 当前版本 ✅
+**改动**：修复自动上传进程崩溃后不自启问题，增强系统稳定性机制
+
+### 关键变更
+- 自动上传守护进程崩溃后不自启 → plist 设置 KeepAlive=true，进程崩溃后自动重启
+- 上传失败文件永不重试 → 新增 _failed/ 目录定期重试机制（每30分钟扫描一次）
+- NAS 断连时无限空转浪费资源 → 新增连通性检查 + 指数退避等待（30s→600s）
+- 无信号处理导致 PID 文件残留 → 注册 SIGTERM/SIGINT 信号处理器
+- 前置启动检查确保已知状态 → 启动前检查 NAS 连通性，不可达时进入等待模式
+
+### 相关文件
+- `nas/scripts/auto_upload_invoices.py` — 主脚本增强
+- `nas/scripts/com.ecs.auto-upload.plist` — plist 配置
+- `nas/scripts/control.sh` — 控制脚本
+
+---
+

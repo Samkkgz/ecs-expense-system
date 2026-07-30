@@ -14,7 +14,9 @@
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
-    <false/>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
     <key>StandardOutPath</key>
     <string>/tmp/auto_upload_invoices.log</string>
     <key>StandardErrorPath</key>
