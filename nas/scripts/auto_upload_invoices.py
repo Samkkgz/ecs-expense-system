@@ -80,6 +80,15 @@ STABLE_INTERVAL = 1.0        # 文件稳定性检测间隔
 STABLE_COUNT = 3             # 连续稳定才算写完
 UPLOAD_TIMEOUT = 120         # 上传超时（秒）
 
+# ======== 稳定机制 v4.8 新增配置 ========
+FAILED_RETRY_INTERVAL = 1800    # _failed/ 重试间隔（秒）= 30分钟
+NAS_CHECK_INTERVAL = 60         # NAS 连通性检查间隔（秒）
+BACKOFF_BASE = 30               # 初始退避秒数（网络断连时）
+BACKOFF_MAX = 600               # 最大退避秒数（10分钟）
+_nas_down_since = 0.0           # NAS 断开时间戳
+_last_failed_retry = 0          # 上次重试 _failed/ 的循环计数
+
+
 # 支持的发票文件扩展名
 SUPPORTED_EXTS = {".pdf", ".png", ".jpg", ".jpeg", ".bmp"}
 
@@ -671,6 +680,134 @@ def _process_file_inner(filepath, conn, abs_watch, rel_path):
         log.info(f"  移至: {dest}")
 
 
+
+# ============================================================
+# v4.8：连通性检查 & 自动重试
+# ============================================================
+
+def _check_nas_connectivity():
+    """检查 NAS API 是否可达（快速健康检查）。
+    
+    尝试访问 NAS 的 root 端点，超时 5 秒。
+    Returns: True 可达, False 不可达
+    """
+    url = f"{NAS_HOST}/"
+    req = Request(url, method="GET", headers=_headers())
+    try:
+        with urlopen(req, timeout=5) as resp:
+            return resp.status < 500
+    except Exception:
+        return False
+
+
+def _get_backoff_delay():
+    """根据 NAS 离线时长计算指数退避延迟。
+    
+    公式: min(BACKOFF_BASE * 2^n, BACKOFF_MAX)
+    其中 n = 离线分钟数 // 2（每 2 分钟退避一级）
+    """
+    global _nas_down_since
+    if _nas_down_since <= 0:
+        return 0
+    elapsed = time.time() - _nas_down_since
+    n = int(elapsed // 120)
+    delay = min(BACKOFF_BASE * (2 ** n), BACKOFF_MAX)
+    return delay
+
+
+def _handle_nas_disconnect():
+    """NAS 不可达时的等待逻辑：
+    1. 记录首次断开时间戳
+    2. 计算指数退避延迟
+    3. 跳过本轮上传，进入等待
+    """
+    global _nas_down_since
+    if _nas_down_since <= 0:
+        _nas_down_since = time.time()
+    delay = _get_backoff_delay()
+    elapsed = time.time() - _nas_down_since
+    log.info(f"NAS 不可达（已下线 {elapsed:.0f} 秒），等待 {delay} 秒后再试")
+    return False
+
+
+def _check_nas_alive():
+    """NAS 连通性检查，更新 _nas_down_since 状态。
+    Returns: True 可达, False 不可达
+    """
+    global _nas_down_since
+    if _check_nas_connectivity():
+        was_down = _nas_down_since > 0
+        _nas_down_since = 0.0
+        if was_down:
+            log.info("NAS 恢复连接")
+        return True
+    else:
+        _handle_nas_disconnect()
+        return False
+
+
+def retry_failed_files(watch_dir, conn):
+    """检查 _failed/ 目录并对其中文件尝试重试上传。
+    
+    成功上传后移到 _imported/，连续失败不做处罚（由指数退避机制控制频率）。
+    """
+    abs_watch = os.path.abspath(watch_dir)
+    failed_dir = os.path.join(abs_watch, "_failed")
+    if not os.path.isdir(failed_dir):
+        return
+    
+    if not _check_nas_alive():
+        return
+    
+    found = []
+    for root, dirs, files in os.walk(failed_dir):
+        for fname in files:
+            if not is_supported_file(fname):
+                continue
+            fpath = os.path.join(root, fname)
+            if not os.path.isfile(fpath):
+                continue
+            found.append(fpath)
+    
+    if not found:
+        return
+    
+    log.info(f"发现 {len(found)} 个待重试的失败文件")
+    for fpath in sorted(found):
+        fname = os.path.basename(fpath)
+        file_size = os.path.getsize(fpath)
+        
+        if check_nas_duplicate(fname, file_size):
+            log.info(f"  跳过（NAS 已有记录）: {os.path.basename(fpath)}")
+            dest = move_file(fpath, os.path.join(abs_watch, "_imported"))
+            if dest:
+                log.info(f"  移至 _imported: {os.path.basename(fpath)}")
+            continue
+        
+        if not wait_file_stable(fpath):
+            log.warning(f"  文件未能稳定，跳过本轮: {os.path.basename(fpath)}")
+            continue
+        
+        log.info(f"  重试上传: {os.path.relpath(fpath, abs_watch)}")
+        ext = os.path.splitext(fpath)[1].lower()
+        ts = int(time.time() * 1000)
+        sp = f"{datetime.now().year}/{datetime.now().month:02d}/{ts}{ext}"
+        inv_date = f"{datetime.now().year}-{datetime.now().month:02d}-01"
+        
+        ok, result = nas_upload_file(fpath, sp)
+        if not ok:
+            log.warning(f"  重试失败（等待下次扫描）: {result}")
+            continue
+        
+        ok, rpc_result = nas_insert_invoice(sp, fname, file_size, inv_date)
+        if not ok:
+            log.warning(f"  数据库写入失败（等待下次扫描）: {rpc_result}")
+            continue
+        
+        dest = move_file(fpath, os.path.join(abs_watch, "_imported"))
+        log.info(f"  重试成功! 移至 _imported: {os.path.basename(fpath)}")
+
+
 def scan_directory(watch_dir, conn):
     """扫描目录，返回需要处理的发票文件列表"""
     abs_watch = os.path.abspath(watch_dir)
@@ -949,6 +1086,13 @@ def main():
     log.info("=" * 58)
 
     # 首次扫描
+    # ======== 启动前健康检查 ========
+    startup_ok = _check_nas_connectivity()
+    if not startup_ok:
+        log.warning("NAS 当前不可达，将进入等待模式")
+        _handle_nas_disconnect()
+    
+
     log.info("首次扫描已有文件...")
     files = scan_directory(watch_dir, conn)
     if files:
@@ -975,10 +1119,36 @@ def main():
     try:
         while True:
             time.sleep(args.interval)
+            
+            # ======== v4.8：定时重试 _failed/ 目录 ========
+            global _last_failed_retry
+            if count - _last_failed_retry >= FAILED_RETRY_INTERVAL // args.interval:
+                _last_failed_retry = count
+                retry_failed_files(watch_dir, conn)
+            
+            # ======== v4.8：NAS 连通性检查（指数退避） ========
+            if _nas_down_since > 0:
+                delay = _get_backoff_delay()
+                backoff_elapsed = time.time() - _nas_down_since
+                if backoff_elapsed < delay:
+                    continue
+                alive = _check_nas_alive()
+                if not alive:
+                    continue
+            
+
             # 重置周期去重集（防止同一个扫描周期内处理同名文件的两份副本）
             # 注意：此去重集生存周期为一个扫描周期，跨周期由 check_nas_duplicate 处理
             seen_in_cycle = set()
             files = scan_directory(watch_dir, conn)
+            
+            # ======== v4.8：快速路径 — 无文件时心跳检测 NAS ========
+            if not files:
+                if count % 30 == 0 and _nas_down_since <= 0:
+                    _check_nas_alive()
+                continue
+            
+
             for fpath in files:
                 basename = os.path.basename(fpath)
                 fsize = os.path.getsize(fpath)
@@ -1005,5 +1175,13 @@ def main():
         log.info("用户手动停止")
 
 
+def _signal_handler(signum, frame):
+    log.info(f"收到信号 {signum}，退出...")
+    sys.exit(0)
+
+
 if __name__ == "__main__":
-    main()
+    import signal
+    signal.signal(signal.SIGTERM, _signal_handler)
+    signal.signal(signal.SIGINT, _signal_handler)
+
