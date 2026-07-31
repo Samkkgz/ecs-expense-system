@@ -1,5 +1,15 @@
 # ECS Expense System - Version History
 
+## v4.13 (2026-07-31) - 当前版本 ✅
+**改动**：修复「删除用户后重建仍无法登录」和「旧发票存储文件预览 400」
+
+### 关键变更
+- 删除用户改为 `admin_delete_user` RPC：同时删除 auth.users、auth.identities、profiles、user_companies，避免重建后沿用旧密码
+- Storage 读取策略放行存量旧路径：对象文件名命中发票表且发票属于当前用户公司时允许读取，兼容无公司前缀的历史/自动上传文件
+- 迁移脚本：`nas/sql/migration-v4.13-delete-storage-fix.sql`
+
+---
+
 ## v4.12 (2026-07-31) - 当前版本 ✅
 **改动**：修复用户创建不生效、普通用户越权查看全部数据/用户管理、普通用户可审批的问题，系统性收紧权限
 

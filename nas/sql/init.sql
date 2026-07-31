@@ -110,7 +110,52 @@ ALTER TABLE storage.s3_multipart_uploads_parts ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "authenticated_all_buckets" ON storage.buckets FOR ALL USING (auth.role() = 'authenticated');
 CREATE POLICY "service_all_buckets" ON storage.buckets FOR ALL USING (auth.role() = 'service_role');
-CREATE POLICY "authenticated_all_objects" ON storage.objects FOR ALL USING (auth.role() = 'authenticated');
+CREATE POLICY "storage_objects_select" ON storage.objects
+  FOR SELECT USING (
+    auth.role() = 'service_role'
+    OR auth.uid() IN (SELECT id FROM public.profiles WHERE role IN ('admin','super_admin'))
+    OR (
+      bucket_id = 'invoices'
+      AND (
+        (storage.foldername(name))[1] IN (
+          SELECT company_id::text FROM public.user_companies WHERE user_id = auth.uid()
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM public.invoices i
+          JOIN public.user_companies uc
+            ON uc.company_id = i.company_id AND uc.user_id = auth.uid()
+          WHERE i.storage_path = storage.objects.name
+             OR i.storage_path = 'invoices/' || storage.objects.name
+        )
+      )
+    )
+  );
+CREATE POLICY "storage_objects_insert" ON storage.objects
+  FOR INSERT WITH CHECK (
+    auth.role() = 'service_role'
+    OR auth.uid() IN (SELECT id FROM public.profiles WHERE role IN ('admin','super_admin'))
+    OR (
+      bucket_id = 'invoices'
+      AND (storage.foldername(name))[1] IN (
+        SELECT company_id::text FROM public.user_companies WHERE user_id = auth.uid()
+      )
+    )
+  );
+CREATE POLICY "storage_objects_update" ON storage.objects
+  FOR UPDATE USING (
+    auth.role() = 'service_role'
+    OR auth.uid() IN (SELECT id FROM public.profiles WHERE role IN ('admin','super_admin'))
+  )
+  WITH CHECK (
+    auth.role() = 'service_role'
+    OR auth.uid() IN (SELECT id FROM public.profiles WHERE role IN ('admin','super_admin'))
+  );
+CREATE POLICY "storage_objects_delete" ON storage.objects
+  FOR DELETE USING (
+    auth.role() = 'service_role'
+    OR auth.uid() IN (SELECT id FROM public.profiles WHERE role IN ('admin','super_admin'))
+  );
 CREATE POLICY "service_all_objects" ON storage.objects FOR ALL USING (auth.role() = 'service_role');
 
 -- ============ 业务表 ============
@@ -580,6 +625,22 @@ BEGIN
     RAISE EXCEPTION '无用户管理权限';
   END IF;
   UPDATE public.profiles SET status=new_status WHERE id=user_id;
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION public.admin_delete_user(p_id UUID)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+BEGIN
+  IF NOT public.is_admin_or_service() THEN
+    RAISE EXCEPTION '无用户管理权限';
+  END IF;
+  IF p_id = auth.uid() THEN
+    RAISE EXCEPTION '不能删除当前登录账号';
+  END IF;
+  DELETE FROM public.user_companies WHERE user_id = p_id;
+  DELETE FROM public.profiles WHERE id = p_id;
+  DELETE FROM auth.identities WHERE user_id = p_id;
+  DELETE FROM auth.users WHERE id = p_id;
 END;
 $fn$;
 

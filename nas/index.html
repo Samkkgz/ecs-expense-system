@@ -1,8 +1,9 @@
-<!-- ECS v4.12 - 权限修复：用户创建/数据隔离/审批权限 -->
+<!-- ECS v4.13 - 修复用户删除不彻底与旧发票存储权限 -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23667eea'/%3E%3Ctext x='32' y='42' font-family='Arial' font-size='24' font-weight='bold' fill='white' text-anchor='middle'%3EECS%3C/text%3E%3C/svg%3E">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ECS 报销管理系统</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
@@ -76,7 +77,7 @@
 <!-- 主应用 -->
 <div class="app-layout" id="appLayout">
   <div class="sidebar">
-    <div class="sidebar-header"><h2>🧾 ECS 报销 <span style="font-size:11px;opacity:0.5">v4.12</span></h2><small>NAS 自托管版</small></div>
+    <div class="sidebar-header"><h2>🧾 ECS 报销 <span style="font-size:11px;opacity:0.5">v4.13</span></h2><small>NAS 自托管版</small></div>
     <div class="sidebar-company" style="padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.1)">
       <select id="companySelector" class="form-select form-select-sm" style="width:100%;background:rgba(255,255,255,0.12);color:#fff;border:none;border-radius:6px;padding:6px 8px;font-size:13px" onchange="switchCompany(parseInt(this.value))">
         <option value="">加载中...</option>
@@ -1309,7 +1310,7 @@ async function adminToggleStatus(uid,cur) {
 
 async function adminDeleteUser(uid) {
   if(!confirm('删除此用户？不可撤销！')) return;
-  var {error}=await sb.from('profiles').delete().eq('id',uid);
+  var {error}=await sb.rpc('admin_delete_user',{p_id:uid});
   if(error) showToast('失败: '+error.message,'danger'); else {showToast('✅ 已删除','success');loadAdminPanel();}
 }
 
