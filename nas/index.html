@@ -1,4 +1,4 @@
-<!-- ECS v4.17.0 - 超级管理员可修改用户所属公司，新发票归新公司、已提交/已审批发票归原公司 -->
+<!-- ECS v4.18.0 - 发票管理增加用户列与用户筛选 -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -77,7 +77,7 @@
 <!-- 主应用 -->
 <div class="app-layout" id="appLayout">
   <div class="sidebar">
-    <div class="sidebar-header"><h2>🧾 ECS 报销 <span style="font-size:11px;opacity:0.5">v4.17.0</span></h2><small>NAS 自托管版</small></div>
+    <div class="sidebar-header"><h2>🧾 ECS 报销 <span style="font-size:11px;opacity:0.5">v4.18.0</span></h2><small>NAS 自托管版</small></div>
     <div class="sidebar-company" style="padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.1)">
       <select id="companySelector" class="form-select form-select-sm" style="width:100%;background:rgba(255,255,255,0.12);color:#fff;border:none;border-radius:6px;padding:6px 8px;font-size:13px" onchange="switchCompany(parseInt(this.value))">
         <option value="">加载中...</option>
@@ -139,12 +139,13 @@
         <div class="filter-bar">
           <select id="filterMonth"><option value="">全部月份</option></select>
           <select id="filterCategory"><option value="">全部类目</option></select>
+          <span id="filterUserWrap" style="display:none"><select id="filterUser"><option value="">全部用户</option></select></span>
           <select id="filterStatus"><option value="">全部状态</option><option value="draft">待提交</option><option value="pending">待审批</option><option value="approved">已通过</option><option value="rejected">已驳回</option></select>
           <input type="text" id="filterSearch" placeholder="🔍 搜索...">
           <div class="export-dropdown" style="position:relative;display:inline-block"><button class="btn btn-sm btn-outline-success" onclick="toggleExportMenu(event)"><i class="bi bi-download"></i> 导出 ▾</button><div class="export-menu" style="display:none;position:absolute;right:0;top:100%;z-index:999;background:#fff;border:1px solid #ddd;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.12);min-width:180px;padding:4px 0"><a class="export-item" href="#" onclick="exportInvoices();closeExportMenu();return false" style="display:block;padding:8px 16px;color:#333;text-decoration:none;font-size:13px"><i class="bi bi-file-earmark-excel"></i> 导出统计报表 (Excel)</a><a class="export-item" href="#" onclick="exportAllInvoices();closeExportMenu();return false" style="display:block;padding:8px 16px;color:#333;text-decoration:none;font-size:13px;border-top:1px solid #f0f0f0"><i class="bi bi-file-earmark-excel"></i> 导出全部报表 (Excel)</a><a class="export-item" href="#" onclick="exportOriginalsZip();closeExportMenu();return false" style="display:block;padding:8px 16px;color:#333;text-decoration:none;font-size:13px"><i class="bi bi-file-zip"></i> 导出选中原件 (ZIP)</a></div></div><button class="btn btn-sm btn-outline-danger" id="batchDeleteBtn" onclick="deleteSelectedInvoices()" title="批量删除选中的发票"><i class="bi bi-trash"></i> 删除选中</button><span id="selectedCount" style="font-size:12px;color:#667eea;display:none;margin-left:4px;white-space:nowrap"></span>
           <button class="btn btn-sm btn-outline-warning" id="cleanupBtn" onclick="cleanupDuplicates()" title="清理重复"><i class="bi bi-eraser"></i></button>
         </div>
-        <div class="table-responsive"><table class="table table-hover"><thead><tr><th style="width:36px"><input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll()" title="全选"></th><th>发票号码</th><th>日期</th><th>商家</th><th>金额</th><th>类目</th><th>状态</th><th>操作</th></tr></thead><tbody id="invoiceTableBody"></tbody></table></div>
+        <div class="table-responsive"><table class="table table-hover"><thead><tr><th style="width:36px"><input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll()" title="全选"></th><th id="userColHeader" style="display:none">用户</th><th>发票号码</th><th>日期</th><th>商家</th><th>金额</th><th>类目</th><th>状态</th><th>操作</th></tr></thead><tbody id="invoiceTableBody"></tbody></table></div>
         <nav><ul class="pagination pagination-sm justify-content-center" id="invoicePagination"></ul></nav>
       </div>
     </div>
@@ -754,22 +755,37 @@ async function handleFiles(files) {
 document.getElementById('filterSearch').oninput = function(){clearTimeout(this._t);this._t=setTimeout(function(){currentPageNum=1;loadInvoices();},300);};
 document.getElementById('filterMonth').onchange=function(){currentPageNum=1;loadInvoices();};
 document.getElementById('filterCategory').onchange=function(){currentPageNum=1;loadInvoices();};
+document.getElementById('filterUser').onchange=function(){currentPageNum=1;loadInvoices();};
 document.getElementById('filterStatus').onchange=function(){currentPageNum=1;loadInvoices();};
 
 async function loadInvoices() {
   var fm = document.getElementById('filterMonth').value;
   var fc = document.getElementById('filterCategory').value;
+  var fu = document.getElementById('filterUser').value;
   var fs = document.getElementById('filterStatus').value;
   var search = document.getElementById('filterSearch').value.trim();
+
+  var {data: userRows} = await sb.from('profiles').select('id,email,name');
+  var userMap = {};
+  (userRows||[]).forEach(function(u){ userMap[u.id] = u; });
+  var userWrap = document.getElementById('filterUserWrap');
+  var userHeader = document.getElementById('userColHeader');
+  if (userWrap) userWrap.style.display = currentUser.isAdmin ? 'inline-block' : 'none';
+  if (userHeader) userHeader.style.display = currentUser.isAdmin ? '' : 'none';
+  if (currentUser.isAdmin) {
+    var userSel = document.getElementById('filterUser');
+    if (userSel) userSel.innerHTML = '<option value="">全部用户</option>' + (userRows||[]).map(function(u){return '<option value="'+u.id+'"'+(u.id===fu?' selected':'')+'>'+(u.name||u.email||'未知')+'</option>';}).join('');
+  }
   
   var query = sb.from('invoices').select('*',{count:'exact'}).order('created_at',{ascending:false});
   if (currentCompany) query = query.eq('company_id', currentCompany.id);
   if (fm) { var fmp=fm.split('-'); var fmd=new Date(parseInt(fmp[0]),parseInt(fmp[1]),0).getDate(); query = query.gte('invoice_date',fm+'-01').lte('invoice_date',fm+'-'+String(fmd).padStart(2,'0')); }
   if (fc) query = query.eq('category_id',fc);
+  if (fu) query = query.eq('uploaded_by', fu);
   if (fs) query = query.eq('status',fs);
   
   var {data, error} = await query;
-  if (error) { document.getElementById('invoiceTableBody').innerHTML = '<tr><td colspan="7" class="text-danger">'+error.message+'</td></tr>'; return; }
+  if (error) { document.getElementById('invoiceTableBody').innerHTML = '<tr><td colspan="'+(currentUser.isAdmin?9:8)+'" class="text-danger">'+error.message+'</td></tr>'; return; }
   
   allInvoices = data || [];
   var filtered = allInvoices;
@@ -784,7 +800,7 @@ async function loadInvoices() {
   var pageData = filtered.slice(start, start+PAGE_SIZE);
   
   var tbody = document.getElementById('invoiceTableBody');
-  if (!pageData.length) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">暂无发票</td></tr>'; }
+  if (!pageData.length) { tbody.innerHTML = '<tr><td colspan="'+(currentUser.isAdmin?9:8)+'" class="text-center text-muted py-4">暂无发票</td></tr>'; }
   else {
     tbody.innerHTML = pageData.map(function(inv){
       var cat = categories.find(function(c){return c.id===inv.category_id;});
@@ -793,7 +809,8 @@ async function loadInvoices() {
       var ckd = selectedInvoices.has(inv.id)?' checked':'';
       var canDelete = currentUser.isAdmin || (!currentUser.isAdmin && (inv.status==='draft' || inv.status==='rejected' || inv.status==='pending'));
       var delBtn = canDelete ? ' <button class="btn btn-sm btn-outline-danger" onclick="deleteInvoice('+inv.id+')">✕</button>' : '';
-      return '<tr><td><input type="checkbox" class="inv-checkbox" data-id="'+inv.id+'" onchange="toggleSelect('+inv.id+',this.checked)"'+ckd+'></td><td><small>'+(inv.invoice_number||'-')+'</small></td><td><small>'+(inv.invoice_date||'-')+'</small></td><td><small>'+(inv.seller_name||'-').substring(0,20)+'</small></td><td><strong>¥'+parseFloat(inv.total_amount||0).toFixed(2)+'</strong></td><td><span class="badge bg-secondary">'+(cat?cat.name:'未分类')+'</span></td><td><span class="badge-status '+st+'">'+stText+'</span></td><td style="white-space:nowrap"><button class="btn btn-sm btn-outline-info" onclick="ocrInvoice('+inv.id+')" title="OCR识别">↻</button> <button class="btn btn-sm btn-outline-primary" onclick="editInvoice('+inv.id+')">✎</button>'+delBtn+'</td></tr>';
+      var userCell = currentUser.isAdmin ? '<td><small>'+(userMap[inv.uploaded_by]?(userMap[inv.uploaded_by].name||userMap[inv.uploaded_by].email||'-'):(inv.uploaded_by||'-'))+'</small></td>' : '';
+      return '<tr><td><input type="checkbox" class="inv-checkbox" data-id="'+inv.id+'" onchange="toggleSelect('+inv.id+',this.checked)"'+ckd+'></td>'+userCell+'<td><small>'+(inv.invoice_number||'-')+'</small></td><td><small>'+(inv.invoice_date||'-')+'</small></td><td><small>'+(inv.seller_name||'-').substring(0,20)+'</small></td><td><strong>¥'+parseFloat(inv.total_amount||0).toFixed(2)+'</strong></td><td><span class="badge bg-secondary">'+(cat?cat.name:'未分类')+'</span></td><td><span class="badge-status '+st+'">'+stText+'</span></td><td style="white-space:nowrap"><button class="btn btn-sm btn-outline-info" onclick="ocrInvoice('+inv.id+')" title="OCR识别">↻</button> <button class="btn btn-sm btn-outline-primary" onclick="editInvoice('+inv.id+')">✎</button>'+delBtn+'</td></tr>';
     }).join('');
     var scb=document.getElementById('selectAllCheckbox');if(scb)scb.checked=false;updateSelectedCount();
   }
@@ -1099,6 +1116,7 @@ async function cleanupDuplicates() {
 async function exportInvoices(exportAll) {
   var fm = document.getElementById('filterMonth').value;
   var fc = document.getElementById('filterCategory').value;
+  var fu = document.getElementById('filterUser').value;
   var fs = document.getElementById('filterStatus').value;
   var search = document.getElementById('filterSearch').value.trim();
   
@@ -1109,6 +1127,7 @@ async function exportInvoices(exportAll) {
   if (!exportAll) {
     if (fm) { var fmp=fm.split('-'); var fmd=new Date(parseInt(fmp[0]),parseInt(fmp[1]),0).getDate(); expQuery = expQuery.gte('invoice_date',fm+'-01').lte('invoice_date',fm+'-'+String(fmd).padStart(2,'0')); }
     if (fc) expQuery = expQuery.eq('category_id',fc);
+    if (fu) expQuery = expQuery.eq('uploaded_by',fu);
     if (fs) expQuery = expQuery.eq('status',fs);
   }
   
