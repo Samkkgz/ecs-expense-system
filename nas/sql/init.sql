@@ -42,13 +42,19 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA auth GRANT ALL ON SEQUENCES TO supabase_admin
 ALTER DEFAULT PRIVILEGES IN SCHEMA auth GRANT ALL ON FUNCTIONS TO supabase_admin;
 ALTER DEFAULT PRIVILEGES IN SCHEMA storage GRANT ALL ON TABLES TO authenticated, supabase_storage_admin, supabase_admin;
 ALTER DEFAULT PRIVILEGES IN SCHEMA storage GRANT ALL ON SEQUENCES TO supabase_storage_admin, supabase_admin;
--- ============ auth 函数桩（GoTrue 迁移后会覆盖）============
-CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid AS $$
-  SELECT nullif(current_setting('request.jwt.claim.sub', true), '')::uuid;
-$$ LANGUAGE sql STABLE SECURITY DEFINER;
-CREATE OR REPLACE FUNCTION auth.role() RETURNS text AS $$
-  SELECT nullif(current_setting('request.jwt.claim.role', true), '')::text;
-$$ LANGUAGE sql STABLE SECURITY DEFINER;
+-- ============ auth 函数桩（GoTrue 迁移后会覆盖；本版本修复空字符串转 uuid 报错）============
+CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $function$
+  SELECT COALESCE(
+    NULLIF(current_setting('request.jwt.claim.sub', TRUE), '')::UUID,
+    (regexp_match(current_setting('request.jwt.claims', TRUE), '"sub"[^:]*:\s*"([^"]+)"'))[1]::UUID
+  );
+$function$;
+CREATE OR REPLACE FUNCTION auth.role() RETURNS text LANGUAGE sql STABLE AS $function$
+  SELECT COALESCE(
+    NULLIF(current_setting('request.jwt.claim.role', TRUE), ''),
+    (regexp_match(current_setting('request.jwt.claims', TRUE), '"role"[^:]*:\s*"([^"]+)"'))[1]
+  );
+$function$;
 
 
 
@@ -116,18 +122,12 @@ CREATE POLICY "storage_objects_select" ON storage.objects
     OR auth.uid() IN (SELECT id FROM public.profiles WHERE role IN ('admin','super_admin'))
     OR (
       bucket_id = 'invoices'
-      AND (
-        (storage.foldername(name))[1] IN (
-          SELECT company_id::text FROM public.user_companies WHERE user_id = auth.uid()
-        )
-        OR EXISTS (
-          SELECT 1
-          FROM public.invoices i
-          JOIN public.user_companies uc
-            ON uc.company_id = i.company_id AND uc.user_id = auth.uid()
-          WHERE i.storage_path = storage.objects.name
-             OR i.storage_path = 'invoices/' || storage.objects.name
-        )
+      AND EXISTS (
+        SELECT 1
+        FROM public.invoices i
+        WHERE i.uploaded_by = auth.uid()
+          AND (i.storage_path = storage.objects.name
+               OR i.storage_path = 'invoices/' || storage.objects.name)
       )
     )
   );
@@ -182,7 +182,7 @@ CREATE TABLE IF NOT EXISTS public.invoices (
     total_amount DECIMAL(14,2),
     raw_ocr_text TEXT,
     uploaded_by UUID,
-    status TEXT DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected')),
+    status TEXT DEFAULT 'draft' CHECK (status IN ('draft','pending','approved','rejected')),
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -271,9 +271,28 @@ $fn$;
 CREATE OR REPLACE FUNCTION public.prevent_member_status_change()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER AS $fn$
 BEGIN
-  IF NEW.status IS DISTINCT FROM OLD.status AND NOT public.is_admin_or_service() THEN
-    IF NEW.status <> 'pending' OR OLD.status NOT IN ('pending','rejected') THEN
-      RAISE EXCEPTION '普通用户不能审批发票';
+  IF auth.role() = 'service_role' THEN
+    RETURN NEW;
+  END IF;
+  IF NEW.status IS DISTINCT FROM OLD.status THEN
+    IF NOT public.is_admin_or_service() THEN
+      IF NOT (OLD.status IN ('draft','rejected') AND NEW.status = 'pending') THEN
+        RAISE EXCEPTION '普通用户只能提交待审批';
+      END IF;
+    ELSE
+      IF NOT (OLD.status = 'pending' AND NEW.status IN ('approved','rejected')) THEN
+        RAISE EXCEPTION '管理员只能审批待审批发票';
+      END IF;
+    END IF;
+  ELSE
+    IF NOT public.is_admin_or_service() THEN
+      IF OLD.status NOT IN ('draft','rejected') THEN
+        RAISE EXCEPTION '该发票当前不可修改';
+      END IF;
+    ELSE
+      IF OLD.status = 'approved' THEN
+        RAISE EXCEPTION '已审批发票已锁定';
+      END IF;
     END IF;
   END IF;
   RETURN NEW;
@@ -318,27 +337,37 @@ CREATE POLICY "user_companies_write" ON public.user_companies
     auth.uid() IN (SELECT id FROM public.profiles WHERE role IN ('super_admin','admin'))
   );
 
--- invoices：用户只看自己关联公司的，管理员/service_role 看全部
+-- invoices：成员只看自己上传的，管理员/service_role 看全部
 CREATE POLICY "invoices_select" ON public.invoices FOR SELECT USING (
   auth.role() = 'service_role'
   OR auth.uid() IN (SELECT id FROM public.profiles WHERE role IN ('admin','super_admin'))
-  OR company_id IN (SELECT company_id FROM public.user_companies WHERE user_id = auth.uid())
+  OR uploaded_by = auth.uid()
 );
 CREATE POLICY "invoices_insert" ON public.invoices FOR INSERT WITH CHECK (
   auth.role() = 'service_role'
   OR auth.uid() IN (SELECT id FROM public.profiles WHERE role IN ('admin','super_admin'))
-  OR company_id IN (SELECT company_id FROM public.user_companies WHERE user_id = auth.uid())
+  OR (
+    uploaded_by = auth.uid()
+    AND company_id IN (SELECT company_id FROM public.user_companies WHERE user_id = auth.uid())
+  )
 );
 CREATE POLICY "invoices_update_admin" ON public.invoices FOR UPDATE USING (
   auth.role() = 'service_role'
   OR
   auth.uid() IN (SELECT id FROM public.profiles WHERE role IN ('admin','super_admin'))
-);
-CREATE POLICY "invoices_update_member" ON public.invoices FOR UPDATE USING (
-  company_id IN (SELECT company_id FROM public.user_companies WHERE user_id = auth.uid())
 )
 WITH CHECK (
-  company_id IN (SELECT company_id FROM public.user_companies WHERE user_id = auth.uid())
+  auth.role() = 'service_role'
+  OR
+  auth.uid() IN (SELECT id FROM public.profiles WHERE role IN ('admin','super_admin'))
+);
+CREATE POLICY "invoices_update_member" ON public.invoices FOR UPDATE USING (
+  uploaded_by = auth.uid()
+  AND status IN ('draft','rejected')
+)
+WITH CHECK (
+  uploaded_by = auth.uid()
+  AND status IN ('draft','rejected','pending')
 );
 CREATE POLICY "invoices_delete" ON public.invoices FOR DELETE USING (
   auth.role() = 'service_role'
@@ -346,11 +375,10 @@ CREATE POLICY "invoices_delete" ON public.invoices FOR DELETE USING (
   auth.uid() IN (SELECT id FROM public.profiles WHERE role IN ('admin','super_admin'))
 );
 
--- expense_reports：同 invoices
+-- expense_reports：仅管理员/服务角色可见
 CREATE POLICY "reports_select" ON public.expense_reports FOR SELECT USING (
   auth.role() = 'service_role'
   OR auth.uid() IN (SELECT id FROM public.profiles WHERE role IN ('admin','super_admin'))
-  OR company_id IN (SELECT company_id FROM public.user_companies WHERE user_id = auth.uid())
 );
 CREATE POLICY "reports_write" ON public.expense_reports FOR ALL USING (
   auth.role() = 'service_role'
@@ -555,7 +583,7 @@ DECLARE
 BEGIN
   IF auth.role() <> 'service_role'
      AND NOT EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role IN ('admin','super_admin')) THEN
-    p_status := 'pending';
+    p_status := 'draft';
     IF p_company_id IS NULL
        OR NOT EXISTS (SELECT 1 FROM public.user_companies WHERE user_id = auth.uid() AND company_id = p_company_id) THEN
       RAISE EXCEPTION '无权向该公司提交发票';
