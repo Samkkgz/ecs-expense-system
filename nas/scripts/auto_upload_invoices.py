@@ -63,9 +63,9 @@ SERVICE_KEY = (
     ".6G3AYHeOucFMTIPnsFn4558OBy9x4mbD3_dT0VBGHJs"
 )
 
-# v4.16：自动上传归属到指定成员账号，并保持“待提交”草稿，由用户在前端确认提交
-UPLOAD_USER_EMAIL = os.environ.get("ECS_UPLOAD_USER_EMAIL", "sam.lu@bsctradingltd.top")
-UPLOAD_COMPANY_ID = int(os.environ.get("ECS_UPLOAD_COMPANY_ID", "2"))
+# v4.16：发票自动上传归属到超级管理员 sam.lu@ecsomni.com 名下的“逸创网络”公司(1)
+UPLOAD_USER_EMAIL = os.environ.get("ECS_UPLOAD_USER_EMAIL", "sam.lu@ecsomni.com")
+UPLOAD_COMPANY_ID = int(os.environ.get("ECS_UPLOAD_COMPANY_ID", "1"))
 _uploader_id = None
 
 # 浏览器 User-Agent，绕过 Cloudflare 的 Browser Integrity Check
