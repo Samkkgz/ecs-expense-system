@@ -1,5 +1,20 @@
 # ECS Expense System - Version History
 
+## v4.12 (2026-07-31) - 当前版本 ✅
+**改动**：修复用户创建不生效、普通用户越权查看全部数据/用户管理、普通用户可审批的问题，系统性收紧权限
+
+### 关键变更
+- 用户创建：改用 `admin_invite_user` RPC 直接创建 GoTrue 用户 + profile + 公司归属，返回一次性初始密码；修复 `/auth/v1/invite` 用 anon key 调用失败导致新用户不出现的问题
+- 权限隔离：发票/报表/公司/档案/Storage 对象全部按「所属公司 + 管理员」收敛 RLS，普通用户不再能读取全部客户数据
+- 角色固化：`handle_new_user` 触发器 + `ensure_my_profile` 只允许新建 member 档案，移除「无 profile 自动升为 super_admin」逻辑
+- 审批限制：普通用户只有保存/上传/重新提交（rejected→pending）权限，通过/驳回仅管理员；删除/清理重复/类目管理同样仅管理员
+- RPC 加固：`admin_create_profile`、`admin_update_user_status`、`admin_assign_user_companies`、`delete_invoice`、`insert_invoice`、`refresh_expense_report` 全部增加调用者权限/公司归属校验
+- 安全修复：移除前端硬编码的 service key，bucket 改由 SQL 保证存在；Storage 对象删除改走管理员用户 token + RLS
+- 前端修复：管理员切普通用户后导航残留（管理员入口/角色显示）会正确重置；普通用户公司下拉按所属公司加载；用户列表补回「所属公司」列
+- 迁移脚本：`nas/sql/migration-v4.12-permissions.sql`（幂等，需对存量数据库执行）
+
+---
+
 ## v4.7 (2026-07-29) - 当前版本 ✅
 **改动**：添加财务类目功能，支持类目映射、筛选与汇总
 
@@ -78,4 +93,3 @@
 - `nas/scripts/control.sh` — 控制脚本
 
 ---
-

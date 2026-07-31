@@ -1,4 +1,4 @@
-<!-- ECS v4.11 - 新增财务类目功能 -->
+<!-- ECS v4.12 - 权限修复：用户创建/数据隔离/审批权限 -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -76,7 +76,7 @@
 <!-- 主应用 -->
 <div class="app-layout" id="appLayout">
   <div class="sidebar">
-    <div class="sidebar-header"><h2>🧾 ECS 报销 <span style="font-size:11px;opacity:0.5">v4.10</span></h2><small>NAS 自托管版</small></div>
+    <div class="sidebar-header"><h2>🧾 ECS 报销 <span style="font-size:11px;opacity:0.5">v4.12</span></h2><small>NAS 自托管版</small></div>
     <div class="sidebar-company" style="padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.1)">
       <select id="companySelector" class="form-select form-select-sm" style="width:100%;background:rgba(255,255,255,0.12);color:#fff;border:none;border-radius:6px;padding:6px 8px;font-size:13px" onchange="switchCompany(parseInt(this.value))">
         <option value="">加载中...</option>
@@ -139,8 +139,8 @@
           <select id="filterCategory"><option value="">全部类目</option></select>
           <select id="filterStatus"><option value="">全部状态</option><option value="pending">待审核</option><option value="approved">已通过</option><option value="rejected">已驳回</option></select>
           <input type="text" id="filterSearch" placeholder="🔍 搜索...">
-          <div class="export-dropdown" style="position:relative;display:inline-block"><button class="btn btn-sm btn-outline-success" onclick="toggleExportMenu(event)"><i class="bi bi-download"></i> 导出 ▾</button><div class="export-menu" style="display:none;position:absolute;right:0;top:100%;z-index:999;background:#fff;border:1px solid #ddd;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.12);min-width:180px;padding:4px 0"><a class="export-item" href="#" onclick="exportInvoices();closeExportMenu();return false" style="display:block;padding:8px 16px;color:#333;text-decoration:none;font-size:13px"><i class="bi bi-file-earmark-excel"></i> 导出统计报表 (Excel)</a><a class="export-item" href="#" onclick="exportAllInvoices();closeExportMenu();return false" style="display:block;padding:8px 16px;color:#333;text-decoration:none;font-size:13px;border-top:1px solid #f0f0f0"><i class="bi bi-file-earmark-excel"></i> 导出全部报表 (Excel)</a><a class="export-item" href="#" onclick="exportOriginalsZip();closeExportMenu();return false" style="display:block;padding:8px 16px;color:#333;text-decoration:none;font-size:13px"><i class="bi bi-file-zip"></i> 导出选中原件 (ZIP)</a></div></div><button class="btn btn-sm btn-outline-danger" onclick="deleteSelectedInvoices()" title="批量删除选中的发票"><i class="bi bi-trash"></i> 删除选中</button><span id="selectedCount" style="font-size:12px;color:#667eea;display:none;margin-left:4px;white-space:nowrap"></span>
-          <button class="btn btn-sm btn-outline-warning" onclick="cleanupDuplicates()" title="清理重复"><i class="bi bi-eraser"></i></button>
+          <div class="export-dropdown" style="position:relative;display:inline-block"><button class="btn btn-sm btn-outline-success" onclick="toggleExportMenu(event)"><i class="bi bi-download"></i> 导出 ▾</button><div class="export-menu" style="display:none;position:absolute;right:0;top:100%;z-index:999;background:#fff;border:1px solid #ddd;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.12);min-width:180px;padding:4px 0"><a class="export-item" href="#" onclick="exportInvoices();closeExportMenu();return false" style="display:block;padding:8px 16px;color:#333;text-decoration:none;font-size:13px"><i class="bi bi-file-earmark-excel"></i> 导出统计报表 (Excel)</a><a class="export-item" href="#" onclick="exportAllInvoices();closeExportMenu();return false" style="display:block;padding:8px 16px;color:#333;text-decoration:none;font-size:13px;border-top:1px solid #f0f0f0"><i class="bi bi-file-earmark-excel"></i> 导出全部报表 (Excel)</a><a class="export-item" href="#" onclick="exportOriginalsZip();closeExportMenu();return false" style="display:block;padding:8px 16px;color:#333;text-decoration:none;font-size:13px"><i class="bi bi-file-zip"></i> 导出选中原件 (ZIP)</a></div></div><button class="btn btn-sm btn-outline-danger" id="batchDeleteBtn" onclick="deleteSelectedInvoices()" title="批量删除选中的发票"><i class="bi bi-trash"></i> 删除选中</button><span id="selectedCount" style="font-size:12px;color:#667eea;display:none;margin-left:4px;white-space:nowrap"></span>
+          <button class="btn btn-sm btn-outline-warning" id="cleanupBtn" onclick="cleanupDuplicates()" title="清理重复"><i class="bi bi-eraser"></i></button>
         </div>
         <div class="table-responsive"><table class="table table-hover"><thead><tr><th style="width:36px"><input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll()" title="全选"></th><th>发票号码</th><th>日期</th><th>商家</th><th>金额</th><th>类目</th><th>状态</th><th>操作</th></tr></thead><tbody id="invoiceTableBody"></tbody></table></div>
         <nav><ul class="pagination pagination-sm justify-content-center" id="invoicePagination"></ul></nav>
@@ -198,13 +198,30 @@
     <div id="invoiceModalBody"></div>
     <div class="d-flex gap-2 justify-content-end mt-3" id="modalActions">
       <button class="btn btn-outline-primary" onclick="saveInvoiceEdit()">💾 保存</button>
-      <button class="btn btn-success" onclick="approveInvoice()">✅ 通过</button>
-      <button class="btn btn-warning" onclick="rejectInvoice()">❌ 驳回</button>
+      <button class="btn btn-success" id="approveBtn" onclick="approveInvoice()">✅ 通过</button>
+      <button class="btn btn-warning" id="rejectBtn" onclick="rejectInvoice()">❌ 驳回</button>
     </div>
   </div>
 </div>
 
 <div id="toastContainer"></div>
+
+<!-- 邀请结果弹窗（展示一次性初始密码，不写控制台） -->
+<div class="modal-overlay" id="inviteResultModal">
+  <div class="modal-content" style="max-width:420px">
+    <h5>✅ 用户创建成功</h5>
+    <p id="inviteResultText" style="margin-top:12px;font-size:14px;line-height:1.8;white-space:pre-line"></p>
+    <div style="text-align:right;margin-top:16px">
+      <button class="btn btn-primary" onclick="closeInviteResult()">知道了</button>
+    </div>
+  </div>
+</div>
+
+<script>
+function closeInviteResult() {
+  document.getElementById('inviteResultModal').classList.remove('active');
+}
+</script>
 
 <!-- ============ 配置（唯一需要改的地方） ============ -->
 <script>
@@ -212,7 +229,6 @@
 // v3.0: 外网访问请改用 https://ecs.你的域名.com
 var SUPABASE_URL = window.location.protocol + '//' + window.location.host;
 var SUPABASE_ANON_KEY = 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzgxNDI1NDcwLCJleHAiOjIwOTY3ODU0NzB9.I6dAztwrSp8qzIjsdHCQlTYpp30l9KBpRDvYos1sfiI';
-var SUPABASE_SERVICE_KEY = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UiLCJpYXQiOjE3ODE0MjU0NzAsImV4cCI6MjA5Njc4NTQ3MH0.6G3AYHeOucFMTIPnsFn4558OBy9x4mbD3_dT0VBGHJs";
 var SITE_URL = window.location.protocol + '//' + window.location.host;
 </script>
 
@@ -304,66 +320,35 @@ async function handleLogout() {
 }
 
 // ============ 应用初始化 ============
-async function ensureBucket() {
-  console.log("🔍 checking invoices bucket...");
-  // 先检查 bucket 是否已存在
-  try {
-    var checkRes = await fetch(SUPABASE_URL + "/storage/v1/bucket/invoices", {
-      headers: { "apikey": SUPABASE_SERVICE_KEY }
-    });
-    if (checkRes.ok) {
-      console.log("✅ invoices bucket already exists");
-      return;
-    }
-  } catch(e) {}
-  
-  // 不存在则创建，最多重试 2 次
-  for (var i = 0; i < 2; i++) {
-    try {
-      var r = await fetch(SUPABASE_URL + "/storage/v1/bucket", {
-        method: "POST",
-        headers: {
-          "apikey": SUPABASE_SERVICE_KEY,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ name: "invoices", public: false, file_size_limit: 52428800 })
-      });
-      if (r.ok || r.status === 409) {
-        console.log("✅ invoices bucket ready");
-        return;
-      }
-      var err = await r.json().catch(function(){ return {}; });
-      console.log("⚠️ bucket attempt " + (i+1) + " failed:", r.status, err.message || err.error || "");
-    } catch(e) {
-      console.log("⚠️ bucket attempt " + (i+1) + " error:", e.message);
-    }
-    if (i < 1) await new Promise(function(r){ setTimeout(r, 2000); });
-  }
-  console.log("❌ bucket creation failed");
-}
-
-
 async function showApp() {
-  await ensureBucket();
-
   document.getElementById('loginPage').style.display = 'none';
   document.getElementById('appLayout').classList.add('active');
   document.getElementById('userEmail').textContent = currentUser.email;
   
-  var {data: profile} = await sb.from('profiles').select('*').eq('id', currentUser.id).single();
+  var {data: profile} = await sb.from('profiles').select('*').eq('id', currentUser.id).maybeSingle();
   if (!profile) {
-    try { await sb.rpc('admin_create_profile',{p_id:currentUser.id,p_email:currentUser.email,p_name:'',p_role:'super_admin'}); }
+    try { await sb.rpc('ensure_my_profile',{p_id:currentUser.id,p_email:currentUser.email}); }
     catch(e){ console.log('profile create skipped:',e.message); }
-    profile = {id:currentUser.id, email:currentUser.email, role:'super_admin', status:'active'};
+    profile = {id:currentUser.id, email:currentUser.email, name:'', role:'member', status:'active'};
   }
   currentUser.profile = profile || {role: 'member'};
   document.getElementById('userName').textContent = (profile && profile.name) || currentUser.email;
   currentUser.isAdmin = profile && (profile.role === 'admin' || profile.role === 'super_admin');
   isSuperAdmin = profile && profile.role === 'super_admin';
+  var roles = {member:'成员', admin:'管理员', super_admin:'超级管理员'};
+  document.getElementById('userRole').textContent = roles[profile && profile.role] || '';
+  document.getElementById('adminNavItem').style.display = currentUser.isAdmin ? 'flex' : 'none';
+
+  var batchBtn = document.getElementById('batchDeleteBtn');
+  if (batchBtn) batchBtn.style.display = currentUser.isAdmin ? 'inline-block' : 'none';
+  var cleanupBtn = document.getElementById('cleanupBtn');
+  if (cleanupBtn) cleanupBtn.style.display = currentUser.isAdmin ? 'inline-block' : 'none';
+  navigateTo('dashboard');
   
   // v3.0 加载公司列表和用户权限
   await loadCompanies();
   await loadUserCompanies();
+  updateCompanySelector();
   await restoreCompanySelection();
   
   // v3.0 无公司权限 -> 显示提示
@@ -373,10 +358,6 @@ async function showApp() {
   }
   
   if (currentUser.isAdmin) {
-    document.getElementById('adminNavItem').style.display = 'flex';
-    var roles = {member:'成员', admin:'管理员', super_admin:'超级管理员'};
-    document.getElementById('userRole').textContent = roles[profile.role] || '';
-    
     var {data: users} = await sb.from('profiles').select('id,email,name');
     var sel = document.getElementById('reportUserSelector');
     sel.style.display = 'inline-block';
@@ -785,7 +766,9 @@ async function loadInvoices() {
       var cat = categories.find(function(c){return c.id===inv.category_id;});
       var st = inv.status==='approved'?'badge-approved':inv.status==='rejected'?'bg-danger':'badge-pending';
       var stText = inv.status==='approved'?'已通过':inv.status==='rejected'?'已驳回':'待审核';
-      var ckd = selectedInvoices.has(inv.id)?' checked':''; return '<tr><td><input type="checkbox" class="inv-checkbox" data-id="'+inv.id+'" onchange="toggleSelect('+inv.id+',this.checked)"'+ckd+'></td><td><small>'+(inv.invoice_number||'-')+'</small></td><td><small>'+(inv.invoice_date||'-')+'</small></td><td><small>'+(inv.seller_name||'-').substring(0,20)+'</small></td><td><strong>¥'+parseFloat(inv.total_amount||0).toFixed(2)+'</strong></td><td><span class="badge bg-secondary">'+(cat?cat.name:'未分类')+'</span></td><td><span class="badge-status '+st+'">'+stText+'</span></td><td style="white-space:nowrap"><button class="btn btn-sm btn-outline-info" onclick="ocrInvoice('+inv.id+')" title="OCR识别">↻</button> <button class="btn btn-sm btn-outline-primary" onclick="editInvoice('+inv.id+')">✎</button> <button class="btn btn-sm btn-outline-danger" onclick="deleteInvoice('+inv.id+')">✕</button></td></tr>';
+      var ckd = selectedInvoices.has(inv.id)?' checked':'';
+      var delBtn = currentUser.isAdmin ? ' <button class="btn btn-sm btn-outline-danger" onclick="deleteInvoice('+inv.id+')">✕</button>' : '';
+      return '<tr><td><input type="checkbox" class="inv-checkbox" data-id="'+inv.id+'" onchange="toggleSelect('+inv.id+',this.checked)"'+ckd+'></td><td><small>'+(inv.invoice_number||'-')+'</small></td><td><small>'+(inv.invoice_date||'-')+'</small></td><td><small>'+(inv.seller_name||'-').substring(0,20)+'</small></td><td><strong>¥'+parseFloat(inv.total_amount||0).toFixed(2)+'</strong></td><td><span class="badge bg-secondary">'+(cat?cat.name:'未分类')+'</span></td><td><span class="badge-status '+st+'">'+stText+'</span></td><td style="white-space:nowrap"><button class="btn btn-sm btn-outline-info" onclick="ocrInvoice('+inv.id+')" title="OCR识别">↻</button> <button class="btn btn-sm btn-outline-primary" onclick="editInvoice('+inv.id+')">✎</button>'+delBtn+'</td></tr>';
     }).join('');
     var scb=document.getElementById('selectAllCheckbox');if(scb)scb.checked=false;updateSelectedCount();
   }
@@ -884,6 +867,10 @@ async function editInvoice(id) {
   var inv = allInvoices.find(function(i){return i.id===id;});
   if (!inv) return;
   document.getElementById('invoiceModal').classList.add('active');
+  var approveBtn = document.getElementById('approveBtn');
+  if (approveBtn) approveBtn.style.display = currentUser.isAdmin ? 'inline-block' : 'none';
+  var rejectBtn = document.getElementById('rejectBtn');
+  if (rejectBtn) rejectBtn.style.display = currentUser.isAdmin ? 'inline-block' : 'none';
   document.getElementById('invoiceModalBody').innerHTML = '<div id="invoicePreview" style="margin-bottom:16px;max-height:300px;overflow:auto;text-align:center"></div><div class="row g-3">'+
     '<div class="col-md-6"><label class="form-label">发票号码</label><input class="form-control" id="editNumber" value="'+(inv.invoice_number||'')+'"></div>'+
     '<div class="col-md-6"><label class="form-label">日期</label><input class="form-control" id="editDate" type="date" value="'+(inv.invoice_date||'')+'"></div>'+
@@ -921,23 +908,27 @@ async function saveInvoiceEdit() {
 
 async function approveInvoice() {
   if (!editingInvoiceId) return;
+  if (!currentUser.isAdmin) { showToast('无审批权限','danger'); return; }
   await sb.from('invoices').update({status:'approved'}).eq('id',editingInvoiceId);
   showToast('✅ 已通过','success'); loadInvoices(); loadDashboard(); closeModal();
 }
 
 async function rejectInvoice() {
   if (!editingInvoiceId) return;
+  if (!currentUser.isAdmin) { showToast('无审批权限','danger'); return; }
   await sb.from('invoices').update({status:'rejected'}).eq('id',editingInvoiceId);
   showToast('✅ 已驳回','success'); loadInvoices(); loadDashboard(); closeModal();
 }
 
 async function deleteInvoice(id) {
+  if (!currentUser.isAdmin) { showToast('无删除权限','danger'); return; }
   if (!confirm('确认删除？')) return;
   var inv = allInvoices.find(function(i){return i.id===id;});
   await _deleteInvoiceWithStorage(id, inv);
 }
 // 批量删除已勾选的发票
 async function deleteSelectedInvoices() {
+  if (!currentUser.isAdmin) { showToast('无删除权限','danger'); return; }
   var ids = Array.from(selectedInvoices);
   if (!ids.length) { showToast('请先勾选发票','warning'); return; }
   if (!confirm('确认删除选中的 ' + ids.length + ' 张发票？此操作不可撤销！')) return;
@@ -957,7 +948,7 @@ async function deleteSelectedInvoices() {
     fail.length && fail.length === ids.length ? 'danger' : fail.length ? 'warning' : 'success');
 }
 
-// 内部：删除 Storage 文件 + 数据库记录（使用 SERVICE_KEY 绕过 RLS）
+// 内部：删除 Storage 文件 + 数据库记录（管理员身份，经 RLS 校验）
 async function _deleteInvoiceWithStorage(id, inv) {
   var errors = [];
 
@@ -967,9 +958,14 @@ async function _deleteInvoiceWithStorage(id, inv) {
       var sp = inv.storage_path;
       if (sp.startsWith('invoices/')) sp = sp.substring(9);
       var storageUrl = SUPABASE_URL + '/storage/v1/object/invoices/' + sp;
+      var token = '';
+      try {
+        var {data: sessData} = await sb.auth.getSession();
+        token = sessData && sessData.session ? sessData.session.access_token : '';
+      } catch(e) {}
       var sr = await fetch(storageUrl, {
         method: 'DELETE',
-        headers: { 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': 'Bearer ' + SUPABASE_SERVICE_KEY }
+        headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + token }
       });
       if (!sr.ok && sr.status !== 404 && sr.status !== 400) {
         errors.push('Storage删除失败: HTTP ' + sr.status);
@@ -1013,6 +1009,7 @@ function updateSelectedCount(){var el=document.getElementById("selectedCount");i
 async function exportOriginalsZip(){var ids=Array.from(selectedInvoices);if(!ids.length){showToast("请先勾选发票","warning");return;}showToast("下载 "+ids.length+" 个文件...","info");try{var zip=new JSZip();var {data:{session}}=await sb.auth.getSession();var token=session?session.access_token:SUPABASE_ANON_KEY;var down=0,fail=[];for(var invId of ids){var inv=allInvoices.find(function(i){return i.id===invId;});if(!inv||!inv.storage_path){fail.push("#"+invId);continue;}try{var res=await fetch(SUPABASE_URL+"/storage/v1/object/invoices/"+inv.storage_path,{headers:{apikey:SUPABASE_ANON_KEY,Authorization:"Bearer "+token}});if(!res.ok)throw new Error("HTTP "+res.status);var blob=await res.blob();var fn=inv.original_filename||(inv.invoice_number||"invoice")+"_"+inv.id;var base=fn.replace(/\.[^.]+$/,""),ext=fn.split(".").pop().toLowerCase();if(["pdf","png","jpg","jpeg","bmp"].indexOf(ext)===-1)ext="pdf";var zn=base+"."+ext,c=1;while(zip.file(zn)){zn=base+"_("+c+")."+ext;c++;}zip.file(zn,blob,{binary:true});down++;}catch(e){fail.push((inv.original_filename||"#"+invId)+": "+e.message);}}if(!down){showToast("下载失败","danger");return;}var zb=await zip.generateAsync({type:"blob"});var url=URL.createObjectURL(zb),a=document.createElement("a");a.href=url;a.download="ECS发票原件_"+new Date().toISOString().slice(0,10)+".zip";document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);var msg="✅ 已打包 "+down+" 个文件";if(fail.length)msg+=", "+fail.length+" 个失败";showToast(msg,down===ids.length?"success":"warning");}catch(e){showToast("打包失败: "+e.message,"danger");}}
 
 async function cleanupDuplicates() {
+  if (!currentUser.isAdmin) { showToast('无清理权限','danger'); return; }
   if (!confirm('清理重复发票？同名同大小只保留最新。')) return;
   var cleanQuery = sb.from('invoices').select('id,original_filename,file_size,storage_path').order('created_at',{ascending:false});
   if (currentCompany) cleanQuery = cleanQuery.eq('company_id', currentCompany.id);
@@ -1202,12 +1199,19 @@ async function loadCategoryManagement() {
   var {data} = await sb.from('expense_categories').select('*').order('sort_order');
   if (!data) return;
   var container = document.getElementById('categoryList');
+  if (!currentUser.isAdmin) {
+    container.innerHTML = '<div class="table-responsive"><table class="table"><thead><tr><th>排序</th><th>名称</th><th>财务类目</th><th>描述</th></tr></thead><tbody>'+
+      data.map(function(c){return '<tr><td>'+c.sort_order+'</td><td>'+c.name+'</td><td>'+(c.financial_category||'-')+'</td><td>'+(c.description||'')+'</td></tr>';}).join('')+
+      '</tbody></table></div>';
+    return;
+  }
   container.innerHTML = '<div class="table-responsive"><table class="table"><thead><tr><th>排序</th><th>名称</th><th>财务类目</th><th>描述</th><th>操作</th></tr></thead><tbody>'+
     data.map(function(c){return '<tr><td><input type="number" class="form-control form-control-sm" style="width:60px" value="'+c.sort_order+'" id="sort_'+c.id+'"></td><td><input class="form-control form-control-sm" value="'+c.name+'" id="name_'+c.id+'"></td><td>'+finCatSelect(c,'finCat_'+c.id)+'</td><td><input class="form-control form-control-sm" value="'+(c.description||'')+'" id="desc_'+c.id+'"></td><td><button class="btn btn-sm btn-outline-primary" onclick="updateCategory('+c.id+')">💾</button> <button class="btn btn-sm btn-outline-danger" onclick="deleteCategory('+c.id+')">🗑</button></td></tr>';}).join('')+
     '</tbody></table></div><hr><h6>添加新类目</h6><div class="row g-2"><div class="col-md-3"><input class="form-control" id="newCatName" placeholder="名称"></div><div class="col-md-2"><select class="form-select" id="newCatFinCat"><option value="">财务类目</option><option value="办公费">办公费</option><option value="差旅费">差旅费</option><option value="招待费">招待费</option><option value="福利费">福利费</option><option value="通讯费">通讯费</option></select></div><div class="col-md-3"><input class="form-control" id="newCatDesc" placeholder="描述"></div><div class="col-md-2"><input class="form-control" id="newCatSort" type="number" value="99" placeholder="排序"></div><div class="col-md-2"><button class="btn btn-primary w-100" onclick="addCategory()">添加</button></div></div>';
 }
 
 async function updateCategory(id) {
+  if (!currentUser.isAdmin) { showToast('无权限','danger'); return; }
   var name=document.getElementById('name_'+id).value.trim();
   if(!name) return showToast('名称不能为空','warning');
   var finCat=document.getElementById('finCat_'+id).value||null;
@@ -1216,6 +1220,7 @@ async function updateCategory(id) {
 }
 
 async function deleteCategory(id) {
+  if (!currentUser.isAdmin) { showToast('无权限','danger'); return; }
   if(!confirm('确定删除？')) return;
   var {count}=await sb.from('invoices').select('*',{count:'exact',head:true}).eq('category_id',id);
   if(count>0) {showToast('该类目下有 '+count+' 张发票，无法删除','warning');return;}
@@ -1224,6 +1229,7 @@ async function deleteCategory(id) {
 }
 
 async function addCategory() {
+  if (!currentUser.isAdmin) { showToast('无权限','danger'); return; }
   var name=document.getElementById('newCatName').value.trim();
   if(!name) return showToast('请输入名称','warning');
   var finCat=document.getElementById('newCatFinCat').value||null;
@@ -1259,7 +1265,7 @@ async function loadAdminPanel() {
   
   var container = document.getElementById('adminContent');
   container.innerHTML = '<h5>👥 用户管理</h5><div class="table-responsive"><table class="table"><thead><tr><th>邮箱</th><th>名称</th><th>角色</th><th>所属公司</th><th>状态</th><th>操作</th></tr></thead><tbody>'+
-    profiles_data.map(function(u){return '<tr><td>'+(u.email||'-')+'</td><td>'+(u.name||'-')+'</td><td><select class="form-select form-select-sm" id="role_'+u.id+'"><option value="member"'+(u.role==='member'?' selected':'')+'>成员</option><option value="admin"'+(u.role==='admin'?' selected':'')+'>管理员</option><option value="super_admin"'+(u.role==='super_admin'?' selected':'')+'>超级管理员</option></select></td><td><span class="badge '+(u.status==='active'?'bg-success':'bg-warning')+'">'+(u.status||'-')+'</span></td><td style="white-space:nowrap"><button class="btn btn-sm btn-outline-primary" onclick="adminUpdateRole(\''+u.id+'\')">💾</button>'+(u.id!==currentUser.id?' <button class="btn btn-sm btn-outline-'+(u.status==='active'?'warning':'success')+'" onclick="adminToggleStatus(\''+u.id+'\',\''+u.status+'\')">'+(u.status==='active'?'⏸':'▶')+'</button> <button class="btn btn-sm btn-outline-danger" onclick="adminDeleteUser(\''+u.id+'\')">🗑</button>':'')+'</td></tr>';}).join('')+
+    profiles_data.map(function(u){return '<tr><td>'+(u.email||'-')+'</td><td>'+(u.name||'-')+'</td><td><select class="form-select form-select-sm" id="role_'+u.id+'"><option value="member"'+(u.role==='member'?' selected':'')+'>成员</option><option value="admin"'+(u.role==='admin'?' selected':'')+'>管理员</option><option value="super_admin"'+(u.role==='super_admin'?' selected':'')+'>超级管理员</option></select></td><td>'+getCompanyNames(u.id)+'</td><td><span class="badge '+(u.status==='active'?'bg-success':'bg-warning')+'">'+(u.status||'-')+'</span></td><td style="white-space:nowrap"><button class="btn btn-sm btn-outline-primary" onclick="adminUpdateRole(\''+u.id+'\')">💾</button>'+(u.id!==currentUser.id?' <button class="btn btn-sm btn-outline-'+(u.status==='active'?'warning':'success')+'" onclick="adminToggleStatus(\''+u.id+'\',\''+u.status+'\')">'+(u.status==='active'?'⏸':'▶')+'</button> <button class="btn btn-sm btn-outline-danger" onclick="adminDeleteUser(\''+u.id+'\')">🗑</button>':'')+'</td></tr>';}).join('')+
     '</tbody></table></div>'+
     '<hr><h6>📊 费用统计</h6><div id="adminStatsContent"><p class="text-muted">加载中...</p></div>'+
     '<hr><h6>📧 邀请新用户</h6><div class="row g-2"><div class="col-md-3"><input class="form-control" id="inviteEmail" placeholder="邮箱"></div><div class="col-md-2"><input class="form-control" id="inviteName" placeholder="名称"></div><div class="col-md-2"><select class="form-select" id="inviteRole"><option value="member">成员</option><option value="admin">管理员</option></select></div><div class="col-md-3" id="inviteCompanyCheckboxes">'+(companies.map(function(c){return '<label class="form-check-label me-2" style="font-size:13px;color:#555"><input type="checkbox" class="invite-company-cb" value="'+c.id+'" checked> '+(c.short_name||c.name)+'</label>';}).join('')||'<span class="text-muted">暂无公司</span>')+'</div><div class="col-md-3"><button class="btn btn-primary w-100" onclick="inviteUser()">邀请</button></div></div>';
@@ -1320,28 +1326,25 @@ async function inviteUser() {
   if(companyIds.length===0) return showToast('请至少选择一家公司','warning');
   
   try {
-    var r=await fetch(SUPABASE_URL+'/auth/v1/invite',{method:'POST',headers:{'apikey':SUPABASE_ANON_KEY,'Content-Type':'application/json'},body:JSON.stringify({email:email,data:{name:name||email.split('@')[0],role:role}})});
-    var inviteData=await r.json();
-    
-    if(inviteData.id){
-      // 创建 profile
-      await sb.from('profiles').insert({id:inviteData.id,email:email,name:name||email.split('@')[0],role:role,status:'active'});
-      // 分配公司
-      for(var ci=0;ci<companyIds.length;ci++){
-        await sb.from('user_companies').insert({user_id:inviteData.id,company_id:companyIds[ci]});
-      }
-      showToast('✅ 邀请已发送到 '+email,'success');
-    } else {
-      // 已有用户，尝试直接分配公司
-      var {data:existingUser}=await sb.from('profiles').select('id').eq('email',email).maybeSingle();
-      if(existingUser){
-        for(var ci=0;ci<companyIds.length;ci++){
-          await sb.from('user_companies').insert({user_id:existingUser.id,company_id:companyIds[ci]});
-        }
-        showToast('✅ 已分配公司给 '+email,'success');
+    var {data: inviteData, error: inviteErr} = await sb.rpc('admin_invite_user',{
+      p_email: email,
+      p_name: name || email.split('@')[0],
+      p_role: role,
+      p_company_ids: companyIds
+    });
+    if (inviteErr) throw inviteErr;
+
+    if (inviteData && inviteData.created) {
+      var resultText = document.getElementById('inviteResultText');
+      var resultModal = document.getElementById('inviteResultModal');
+      if (resultText && resultModal) {
+        resultText.textContent = '用户 '+email+' 创建成功\n初始密码：'+inviteData.password+'\n请立即告知用户，登录后请修改密码。';
+        resultModal.classList.add('active');
       } else {
-        showToast('✅ 邀请已发送，用户登录后自动分配','success');
+        showToast('✅ 用户已创建','success');
       }
+    } else {
+      showToast('✅ 用户已存在，角色与公司权限已更新','success');
     }
   } catch(e) {
     showToast('❌ 邀请失败: '+e.message,'danger');
