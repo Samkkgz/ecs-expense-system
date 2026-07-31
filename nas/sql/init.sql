@@ -709,3 +709,186 @@ ALTER TABLE public.expense_reports ADD UNIQUE (report_type, period_key, company_
 -- v3.0 唯一索引：同名同大小同公司视为重复
 DROP INDEX IF EXISTS uq_invoices_filename_size;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_invoices_filename_size_company ON public.invoices (original_filename, file_size, company_id);
+
+-- ============ v4.15 审批中心权限（覆盖上面的策略） ============
+DROP POLICY IF EXISTS "invoices_select" ON public.invoices;
+CREATE POLICY "invoices_select" ON public.invoices
+  FOR SELECT USING (
+    auth.role() = 'service_role'
+    OR auth.uid() IN (SELECT id FROM public.profiles WHERE role = 'super_admin')
+    OR (
+      auth.uid() IN (SELECT id FROM public.profiles WHERE role = 'admin')
+      AND company_id IN (SELECT company_id FROM public.user_companies WHERE user_id = auth.uid())
+    )
+    OR uploaded_by = auth.uid()
+  );
+
+DROP POLICY IF EXISTS "invoices_insert" ON public.invoices;
+CREATE POLICY "invoices_insert" ON public.invoices
+  FOR INSERT WITH CHECK (
+    auth.role() = 'service_role'
+    OR auth.uid() IN (SELECT id FROM public.profiles WHERE role = 'super_admin')
+    OR (
+      uploaded_by = auth.uid()
+      AND company_id IN (SELECT company_id FROM public.user_companies WHERE user_id = auth.uid())
+    )
+  );
+
+DROP POLICY IF EXISTS "invoices_update_admin" ON public.invoices;
+DROP POLICY IF EXISTS "invoices_update_member" ON public.invoices;
+CREATE POLICY "invoices_update_admin" ON public.invoices
+  FOR UPDATE USING (
+    auth.role() = 'service_role'
+    OR auth.uid() IN (SELECT id FROM public.profiles WHERE role = 'super_admin')
+    OR (
+      auth.uid() IN (SELECT id FROM public.profiles WHERE role = 'admin')
+      AND company_id IN (SELECT company_id FROM public.user_companies WHERE user_id = auth.uid())
+    )
+  )
+  WITH CHECK (
+    auth.role() = 'service_role'
+    OR auth.uid() IN (SELECT id FROM public.profiles WHERE role = 'super_admin')
+    OR (
+      auth.uid() IN (SELECT id FROM public.profiles WHERE role = 'admin')
+      AND company_id IN (SELECT company_id FROM public.user_companies WHERE user_id = auth.uid())
+    )
+  );
+CREATE POLICY "invoices_update_member" ON public.invoices
+  FOR UPDATE USING (
+    uploaded_by = auth.uid()
+    AND status IN ('draft','rejected')
+  )
+  WITH CHECK (
+    uploaded_by = auth.uid()
+    AND status IN ('draft','rejected','pending')
+  );
+
+DROP POLICY IF EXISTS "invoices_delete" ON public.invoices;
+CREATE POLICY "invoices_delete" ON public.invoices
+  FOR DELETE USING (
+    auth.role() = 'service_role'
+    OR auth.uid() IN (SELECT id FROM public.profiles WHERE role = 'super_admin')
+    OR (
+      auth.uid() IN (SELECT id FROM public.profiles WHERE role = 'admin')
+      AND company_id IN (SELECT company_id FROM public.user_companies WHERE user_id = auth.uid())
+    )
+  );
+
+DROP POLICY IF EXISTS "companies_read" ON public.companies;
+CREATE POLICY "companies_read" ON public.companies
+  FOR SELECT USING (
+    auth.role() = 'service_role'
+    OR auth.uid() IN (SELECT id FROM public.profiles WHERE role = 'super_admin')
+    OR id IN (SELECT company_id FROM public.user_companies WHERE user_id = auth.uid())
+  );
+
+CREATE OR REPLACE FUNCTION public.current_user_sees_profile(p_id UUID)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER AS $fn$
+  SELECT auth.role() = 'service_role'
+    OR auth.uid() = p_id
+    OR EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role = 'super_admin')
+    OR (
+      EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role = 'admin')
+      AND EXISTS (
+        SELECT 1
+        FROM public.user_companies uc1
+        JOIN public.user_companies uc2 ON uc1.company_id = uc2.company_id
+        WHERE uc1.user_id = auth.uid() AND uc2.user_id = p_id
+      )
+    );
+$fn$;
+
+DROP POLICY IF EXISTS "profiles_read" ON public.profiles;
+CREATE POLICY "profiles_read" ON public.profiles
+  FOR SELECT USING (public.current_user_sees_profile(id));
+
+DROP POLICY IF EXISTS "reports_select" ON public.expense_reports;
+CREATE POLICY "reports_select" ON public.expense_reports
+  FOR SELECT USING (
+    auth.role() = 'service_role'
+    OR auth.uid() IN (SELECT id FROM public.profiles WHERE role = 'super_admin')
+    OR (
+      auth.uid() IN (SELECT id FROM public.profiles WHERE role = 'admin')
+      AND company_id IN (SELECT company_id FROM public.user_companies WHERE user_id = auth.uid())
+    )
+  );
+
+DROP POLICY IF EXISTS "storage_objects_select" ON storage.objects;
+CREATE POLICY "storage_objects_select" ON storage.objects
+  FOR SELECT USING (
+    auth.role() = 'service_role'
+    OR auth.uid() IN (SELECT id FROM public.profiles WHERE role = 'super_admin')
+    OR (
+      bucket_id = 'invoices'
+      AND EXISTS (
+        SELECT 1
+        FROM public.invoices i
+        WHERE (
+          i.uploaded_by = auth.uid()
+          OR (
+            auth.uid() IN (SELECT id FROM public.profiles WHERE role = 'admin')
+            AND i.company_id IN (SELECT company_id FROM public.user_companies WHERE user_id = auth.uid())
+          )
+        )
+        AND (i.storage_path = storage.objects.name
+             OR i.storage_path = 'invoices/' || storage.objects.name)
+      )
+    )
+  );
+
+DROP POLICY IF EXISTS "storage_objects_insert" ON storage.objects;
+CREATE POLICY "storage_objects_insert" ON storage.objects
+  FOR INSERT WITH CHECK (
+    auth.role() = 'service_role'
+    OR auth.uid() IN (SELECT id FROM public.profiles WHERE role = 'super_admin')
+    OR (
+      bucket_id = 'invoices'
+      AND (storage.foldername(name))[1] IN (
+        SELECT company_id::text FROM public.user_companies WHERE user_id = auth.uid()
+      )
+    )
+  );
+
+DROP POLICY IF EXISTS "storage_objects_update" ON storage.objects;
+CREATE POLICY "storage_objects_update" ON storage.objects
+  FOR UPDATE USING (
+    auth.role() = 'service_role'
+    OR auth.uid() IN (SELECT id FROM public.profiles WHERE role = 'super_admin')
+    OR (
+      bucket_id = 'invoices'
+      AND EXISTS (
+        SELECT 1
+        FROM public.invoices i
+        WHERE i.company_id IN (SELECT company_id FROM public.user_companies WHERE user_id = auth.uid())
+          AND (i.storage_path = storage.objects.name
+               OR i.storage_path = 'invoices/' || storage.objects.name)
+      )
+    )
+  )
+  WITH CHECK (
+    auth.role() = 'service_role'
+    OR auth.uid() IN (SELECT id FROM public.profiles WHERE role = 'super_admin')
+    OR (
+      bucket_id = 'invoices'
+      AND (storage.foldername(name))[1] IN (
+        SELECT company_id::text FROM public.user_companies WHERE user_id = auth.uid()
+      )
+    )
+  );
+
+DROP POLICY IF EXISTS "storage_objects_delete" ON storage.objects;
+CREATE POLICY "storage_objects_delete" ON storage.objects
+  FOR DELETE USING (
+    auth.role() = 'service_role'
+    OR auth.uid() IN (SELECT id FROM public.profiles WHERE role = 'super_admin')
+    OR (
+      bucket_id = 'invoices'
+      AND EXISTS (
+        SELECT 1
+        FROM public.invoices i
+        WHERE i.company_id IN (SELECT company_id FROM public.user_companies WHERE user_id = auth.uid())
+          AND (i.storage_path = storage.objects.name
+               OR i.storage_path = 'invoices/' || storage.objects.name)
+      )
+    )
+  );
