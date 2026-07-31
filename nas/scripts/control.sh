@@ -97,7 +97,6 @@ case "${1:-status}" in
     <array>
         <string>/usr/bin/python3</string>
         <string>${MAIN_SCRIPT}</string>
-        <string>--daemon</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
