@@ -1,4 +1,4 @@
-<!-- ECS v4.15 - 审批中心（管理员本公司/超管全部公司） -->
+<!-- ECS v4.16 - OCR保持草稿 + 成员可删除草稿/驳回件 -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -77,7 +77,7 @@
 <!-- 主应用 -->
 <div class="app-layout" id="appLayout">
   <div class="sidebar">
-    <div class="sidebar-header"><h2>🧾 ECS 报销 <span style="font-size:11px;opacity:0.5">v4.15</span></h2><small>NAS 自托管版</small></div>
+    <div class="sidebar-header"><h2>🧾 ECS 报销 <span style="font-size:11px;opacity:0.5">v4.16</span></h2><small>NAS 自托管版</small></div>
     <div class="sidebar-company" style="padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.1)">
       <select id="companySelector" class="form-select form-select-sm" style="width:100%;background:rgba(255,255,255,0.12);color:#fff;border:none;border-radius:6px;padding:6px 8px;font-size:13px" onchange="switchCompany(parseInt(this.value))">
         <option value="">加载中...</option>
@@ -791,7 +791,8 @@ async function loadInvoices() {
       var st = inv.status==='approved'?'badge-approved':inv.status==='rejected'?'bg-danger':inv.status==='draft'?'bg-secondary':'badge-pending';
       var stText = inv.status==='approved'?'已通过':inv.status==='rejected'?'已驳回':inv.status==='draft'?'待提交':'待审批';
       var ckd = selectedInvoices.has(inv.id)?' checked':'';
-      var delBtn = currentUser.isAdmin ? ' <button class="btn btn-sm btn-outline-danger" onclick="deleteInvoice('+inv.id+')">✕</button>' : '';
+      var canDelete = currentUser.isAdmin || (!currentUser.isAdmin && (inv.status==='draft' || inv.status==='rejected'));
+      var delBtn = canDelete ? ' <button class="btn btn-sm btn-outline-danger" onclick="deleteInvoice('+inv.id+')">✕</button>' : '';
       return '<tr><td><input type="checkbox" class="inv-checkbox" data-id="'+inv.id+'" onchange="toggleSelect('+inv.id+',this.checked)"'+ckd+'></td><td><small>'+(inv.invoice_number||'-')+'</small></td><td><small>'+(inv.invoice_date||'-')+'</small></td><td><small>'+(inv.seller_name||'-').substring(0,20)+'</small></td><td><strong>¥'+parseFloat(inv.total_amount||0).toFixed(2)+'</strong></td><td><span class="badge bg-secondary">'+(cat?cat.name:'未分类')+'</span></td><td><span class="badge-status '+st+'">'+stText+'</span></td><td style="white-space:nowrap"><button class="btn btn-sm btn-outline-info" onclick="ocrInvoice('+inv.id+')" title="OCR识别">↻</button> <button class="btn btn-sm btn-outline-primary" onclick="editInvoice('+inv.id+')">✎</button>'+delBtn+'</td></tr>';
     }).join('');
     var scb=document.getElementById('selectAllCheckbox');if(scb)scb.checked=false;updateSelectedCount();
@@ -822,7 +823,17 @@ async function ocrInvoice(id) {
       body: JSON.stringify({record:{id:id,storage_path:inv.storage_path}})
     });
     var result = await r.json();
-    if (result.success && result.data && (result.data.invoice_number || result.data.seller_name || result.data.total_amount)) { showToast('✅ 识别完成','success'); await loadInvoices(); await editInvoice(id); return; }
+    if (result.success && result.data && (result.data.invoice_number || result.data.seller_name || result.data.total_amount)) {
+      var ocrUp={};
+      if(result.data.invoice_number)ocrUp.invoice_number=result.data.invoice_number;
+      if(result.data.invoice_date)ocrUp.invoice_date=result.data.invoice_date;
+      if(result.data.seller_name)ocrUp.seller_name=result.data.seller_name;
+      if(result.data.total_amount)ocrUp.total_amount=result.data.total_amount;
+      if(result.data.project_location)ocrUp.project_location=result.data.project_location;
+      ocrUp.raw_ocr_text=result.raw||'';
+      await sb.from('invoices').update(ocrUp).eq('id',id);
+      showToast('✅ 识别完成','success'); await loadInvoices(); await editInvoice(id); return;
+    }
     
     // 降级：渲染为图片再OCR（直接fetch，经过Cloudflare/网关）
     var sp = inv.storage_path;
@@ -933,12 +944,16 @@ async function saveInvoiceEdit() {
   var {error} = await sb.from('invoices').update(data).eq('id',editingInvoiceId);
   if (error) { showToast('保存失败: '+error.message,'danger'); return; }
   showToast('✅ 已保存','success');
+  if (!currentUser.isAdmin && inv && (inv.status === 'draft' || inv.status === 'rejected')) {
+    if (confirm('✅ 已保存。是否立即提交审批？')) {
+      var {error: subErr} = await sb.from('invoices').update({status:'pending'}).eq('id',editingInvoiceId);
+      if (subErr) showToast('提交失败: '+subErr.message,'danger');
+      else showToast('✅ 已提交审批','success');
+    }
+  }
   await loadInvoices();
   await loadDashboard();
-  var eid = editingInvoiceId;
   closeModal();
-  editingInvoiceId = eid;
-  await editInvoice(eid);
 }
 
 async function submitInvoice() {
@@ -971,9 +986,12 @@ async function rejectInvoice() {
 }
 
 async function deleteInvoice(id) {
-  if (!currentUser.isAdmin) { showToast('无删除权限','danger'); return; }
-  if (!confirm('确认删除？')) return;
   var inv = allInvoices.find(function(i){return i.id===id;});
+  if (!currentUser.isAdmin && (!inv || (inv.status !== 'draft' && inv.status !== 'rejected'))) {
+    showToast('只有待提交/已驳回的发票可以删除','warning');
+    return;
+  }
+  if (!confirm('确认删除？')) return;
   await _deleteInvoiceWithStorage(id, inv);
 }
 // 批量删除已勾选的发票

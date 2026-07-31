@@ -892,3 +892,117 @@ CREATE POLICY "storage_objects_delete" ON storage.objects
       )
     )
   );
+
+-- ============ v4.16 OCR保持草稿 + 成员删除草稿/驳回件（覆盖上面的策略） ============
+CREATE OR REPLACE FUNCTION public.prevent_member_status_change()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+BEGIN
+  IF auth.role() = 'service_role' THEN
+    IF NEW.status IS DISTINCT FROM OLD.status AND NEW.status = 'pending' THEN
+      RAISE EXCEPTION '服务角色不能自动提交审批';
+    END IF;
+    RETURN NEW;
+  END IF;
+  IF NEW.status IS DISTINCT FROM OLD.status THEN
+    IF NOT public.is_admin_or_service() THEN
+      IF NOT (OLD.status IN ('draft','rejected') AND NEW.status = 'pending') THEN
+        RAISE EXCEPTION '普通用户只能提交待审批';
+      END IF;
+    ELSE
+      IF NOT (OLD.status = 'pending' AND NEW.status IN ('approved','rejected')) THEN
+        RAISE EXCEPTION '管理员只能审批待审批发票';
+      END IF;
+    END IF;
+  ELSE
+    IF NOT public.is_admin_or_service() THEN
+      IF OLD.status NOT IN ('draft','rejected') THEN
+        RAISE EXCEPTION '该发票当前不可修改';
+      END IF;
+    ELSE
+      IF OLD.status = 'approved' THEN
+        RAISE EXCEPTION '已审批发票已锁定';
+      END IF;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$fn$;
+
+CREATE POLICY "invoices_delete_member" ON public.invoices
+  FOR DELETE USING (
+    uploaded_by = auth.uid()
+    AND status IN ('draft','rejected')
+  );
+
+CREATE POLICY "storage_objects_delete_member" ON storage.objects
+  FOR DELETE USING (
+    bucket_id = 'invoices'
+    AND EXISTS (
+      SELECT 1
+      FROM public.invoices i
+      WHERE i.uploaded_by = auth.uid()
+        AND i.status IN ('draft','rejected')
+        AND (i.storage_path = storage.objects.name
+             OR i.storage_path = 'invoices/' || storage.objects.name)
+    )
+  );
+
+CREATE OR REPLACE FUNCTION public.insert_invoice(
+  p_storage_path TEXT, p_original_filename TEXT, p_file_size INTEGER,
+  p_invoice_date TEXT DEFAULT NULL, p_category_id BIGINT DEFAULT NULL,
+  p_project_location TEXT DEFAULT NULL, p_uploaded_by UUID DEFAULT NULL,
+  p_status TEXT DEFAULT 'draft', p_company_id BIGINT DEFAULT 1
+)
+RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+DECLARE
+  v_date DATE;
+  v_company_id BIGINT;
+BEGIN
+  IF auth.role() <> 'service_role'
+     AND NOT EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role IN ('admin','super_admin')) THEN
+    p_status := 'draft';
+    IF p_company_id IS NULL
+       OR NOT EXISTS (SELECT 1 FROM public.user_companies WHERE user_id = auth.uid() AND company_id = p_company_id) THEN
+      RAISE EXCEPTION '无权向该公司提交发票';
+    END IF;
+  END IF;
+
+  IF p_uploaded_by IS NULL AND auth.uid() IS NOT NULL THEN
+    p_uploaded_by := auth.uid();
+  END IF;
+  v_company_id := COALESCE(p_company_id, 1);
+  v_date := COALESCE(p_invoice_date::DATE, CURRENT_DATE);
+  PERFORM 1 FROM public.invoices
+  WHERE original_filename = insert_invoice.p_original_filename
+    AND file_size = insert_invoice.p_file_size
+    AND company_id = v_company_id;
+  IF NOT FOUND THEN
+    INSERT INTO public.invoices(
+      storage_path, original_filename, file_size,
+      category_id, project_location, uploaded_by, status, invoice_date, company_id
+    ) VALUES (
+      insert_invoice.p_storage_path, insert_invoice.p_original_filename, insert_invoice.p_file_size,
+      p_category_id, p_project_location, p_uploaded_by, p_status, v_date, v_company_id
+    );
+  END IF;
+  RETURN JSONB_BUILD_OBJECT('success', true);
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION public.delete_invoice(p_id BIGINT)
+RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+DECLARE v_storage_path TEXT;
+BEGIN
+  IF NOT public.is_admin_or_service() THEN
+    IF NOT EXISTS (
+      SELECT 1 FROM public.invoices
+      WHERE id = p_id AND uploaded_by = auth.uid() AND status IN ('draft','rejected')
+    ) THEN
+      RAISE EXCEPTION '无删除权限';
+    END IF;
+  END IF;
+  SELECT storage_path INTO v_storage_path FROM public.invoices WHERE id = p_id;
+  DELETE FROM public.invoices WHERE id = p_id;
+  RETURN JSONB_BUILD_OBJECT('success', true, 'storage_path', v_storage_path);
+END;
+$fn$;

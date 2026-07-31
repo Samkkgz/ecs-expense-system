@@ -63,6 +63,11 @@ SERVICE_KEY = (
     ".6G3AYHeOucFMTIPnsFn4558OBy9x4mbD3_dT0VBGHJs"
 )
 
+# v4.16：自动上传归属到指定成员账号，并保持“待提交”草稿，由用户在前端确认提交
+UPLOAD_USER_EMAIL = os.environ.get("ECS_UPLOAD_USER_EMAIL", "sam.lu@bsctradingltd.top")
+UPLOAD_COMPANY_ID = int(os.environ.get("ECS_UPLOAD_COMPANY_ID", "2"))
+_uploader_id = None
+
 # 浏览器 User-Agent，绕过 Cloudflare 的 Browser Integrity Check
 _USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
@@ -299,6 +304,9 @@ def nas_insert_invoice(storage_path, original_filename, file_size, invoice_date)
         "p_original_filename": original_filename,
         "p_file_size": file_size,
         "p_invoice_date": invoice_date,
+        "p_uploaded_by": resolve_uploader_id(),
+        "p_company_id": UPLOAD_COMPANY_ID,
+        "p_status": "draft",
     }
     data = json.dumps(body, ensure_ascii=False).encode("utf-8")
     headers = _headers({
@@ -320,6 +328,32 @@ def nas_insert_invoice(storage_path, original_filename, file_size, invoice_date)
     except Exception as e:
         log.error(f"[RPC] 请求异常: {e}")
         return False, str(e)
+
+
+def resolve_uploader_id():
+    """通过 profiles 接口解析自动上传归属的成员用户 id（服务角色读取，结果缓存）"""
+    global _uploader_id
+    if _uploader_id:
+        return _uploader_id
+    from urllib.parse import quote
+    url = f"{NAS_HOST}/rest/v1/profiles?select=id&email=eq.{quote(UPLOAD_USER_EMAIL)}"
+    headers = _headers({
+        "apikey": SERVICE_KEY,
+        "Authorization": f"Bearer {SERVICE_KEY}",
+        "Accept": "application/json",
+    })
+    try:
+        req = Request(url, headers=headers, method="GET")
+        with urlopen(req, timeout=15) as resp:
+            rows = json.loads(resp.read())
+        if rows and rows[0].get("id"):
+            _uploader_id = rows[0]["id"]
+            log.info(f"[RPC] 上传人已解析: {UPLOAD_USER_EMAIL} -> {_uploader_id}")
+            return _uploader_id
+        log.error(f"[RPC] 未找到上传人账号: {UPLOAD_USER_EMAIL}")
+    except Exception as e:
+        log.error(f"[RPC] 解析上传人失败: {e}")
+    return None
 
 
 # ============================================================
@@ -629,7 +663,7 @@ def _process_file_inner(filepath, conn, abs_watch, rel_path):
     now = datetime.now()
     ext = os.path.splitext(filepath)[1].lower()
     timestamp_ms = int(time.time() * 1000)
-    storage_path = f"{now.year}/{now.month:02d}/{timestamp_ms}{ext}"
+    storage_path = f"{UPLOAD_COMPANY_ID}/{now.year}/{now.month:02d}/{timestamp_ms}{ext}"
     invoice_date = f"{now.year}-{now.month:02d}-01"
 
     log.info(f"📤 上传中: {rel_path}")
@@ -791,7 +825,7 @@ def retry_failed_files(watch_dir, conn):
         log.info(f"  重试上传: {os.path.relpath(fpath, abs_watch)}")
         ext = os.path.splitext(fpath)[1].lower()
         ts = int(time.time() * 1000)
-        sp = f"{datetime.now().year}/{datetime.now().month:02d}/{ts}{ext}"
+        sp = f"{UPLOAD_COMPANY_ID}/{datetime.now().year}/{datetime.now().month:02d}/{ts}{ext}"
         inv_date = f"{datetime.now().year}-{datetime.now().month:02d}-01"
         
         ok, result = nas_upload_file(fpath, sp)
@@ -908,7 +942,7 @@ def reupload_from_imported(watch_dir, conn):
         now = datetime.now()
         ext = os.path.splitext(fpath)[1].lower()
         timestamp_ms = int(time.time() * 1000)
-        storage_path = f"{now.year}/{now.month:02d}/{timestamp_ms}{ext}"
+        storage_path = f"{UPLOAD_COMPANY_ID}/{now.year}/{now.month:02d}/{timestamp_ms}{ext}"
         invoice_date = f"{now.year}-{now.month:02d}-01"
         file_size = os.path.getsize(fpath)
         
@@ -1185,4 +1219,3 @@ if __name__ == "__main__":
     signal.signal(signal.SIGTERM, _signal_handler)
     signal.signal(signal.SIGINT, _signal_handler)
     main()
-

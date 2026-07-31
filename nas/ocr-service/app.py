@@ -320,7 +320,8 @@ class OCRHandler(BaseHTTPRequestHandler):
                 print(f"[OCR] parsed: {json.dumps(parsed, ensure_ascii=False)}", flush=True)
 
                 # Save to DB directly via REST API (Docker internal network)
-                updates = {"status": "pending"}
+                # v4.16: 识别只保存字段，不改变审批状态（保持草稿，由用户确认后提交）
+                updates = {}
                 for k in ["invoice_number","invoice_date","seller_name","total_amount","project_location","raw_ocr_text"]:
                     v = parsed.get(k)
                     if v: updates[k] = v
@@ -364,7 +365,7 @@ class OCRHandler(BaseHTTPRequestHandler):
                     ocr_data, err = call_baidu_ocr(img_b64, "general")
                 if ocr_data and not err:
                     parsed = parse_ocr_result(ocr_data)
-                    updates = {"status": "pending", "raw_ocr_text": str(ocr_data)[:500]}
+                    updates = {"raw_ocr_text": str(ocr_data)[:500]}
                     for k in ["invoice_number","invoice_date","seller_name","total_amount","project_location"]:
                         v = parsed.get(k)
                         if v: updates[k] = v
