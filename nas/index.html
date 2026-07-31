@@ -1,4 +1,4 @@
-<!-- ECS v4.16.2 - 成员可删除/批量删除自己的待提交、待审批、已驳回发票 -->
+<!-- ECS v4.17.0 - 超级管理员可修改用户所属公司，新发票归新公司、已提交/已审批发票归原公司 -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -77,7 +77,7 @@
 <!-- 主应用 -->
 <div class="app-layout" id="appLayout">
   <div class="sidebar">
-    <div class="sidebar-header"><h2>🧾 ECS 报销 <span style="font-size:11px;opacity:0.5">v4.16.2</span></h2><small>NAS 自托管版</small></div>
+    <div class="sidebar-header"><h2>🧾 ECS 报销 <span style="font-size:11px;opacity:0.5">v4.17.0</span></h2><small>NAS 自托管版</small></div>
     <div class="sidebar-company" style="padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.1)">
       <select id="companySelector" class="form-select form-select-sm" style="width:100%;background:rgba(255,255,255,0.12);color:#fff;border:none;border-radius:6px;padding:6px 8px;font-size:13px" onchange="switchCompany(parseInt(this.value))">
         <option value="">加载中...</option>
@@ -1489,7 +1489,7 @@ async function loadAdminPanel() {
   
   var container = document.getElementById('adminContent');
   container.innerHTML = '<h5>👥 用户管理</h5><div class="table-responsive"><table class="table"><thead><tr><th>邮箱</th><th>名称</th><th>角色</th><th>所属公司</th><th>状态</th><th>操作</th></tr></thead><tbody>'+
-    profiles_data.map(function(u){return '<tr><td>'+(u.email||'-')+'</td><td>'+(u.name||'-')+'</td><td><select class="form-select form-select-sm" id="role_'+u.id+'"><option value="member"'+(u.role==='member'?' selected':'')+'>成员</option><option value="admin"'+(u.role==='admin'?' selected':'')+'>管理员</option><option value="super_admin"'+(u.role==='super_admin'?' selected':'')+'>超级管理员</option></select></td><td>'+getCompanyNames(u.id)+'</td><td><span class="badge '+(u.status==='active'?'bg-success':'bg-warning')+'">'+(u.status||'-')+'</span></td><td style="white-space:nowrap"><button class="btn btn-sm btn-outline-primary" onclick="adminUpdateRole(\''+u.id+'\')">💾</button>'+(u.id!==currentUser.id?' <button class="btn btn-sm btn-outline-'+(u.status==='active'?'warning':'success')+'" onclick="adminToggleStatus(\''+u.id+'\',\''+u.status+'\')">'+(u.status==='active'?'⏸':'▶')+'</button> <button class="btn btn-sm btn-outline-danger" onclick="adminDeleteUser(\''+u.id+'\')">🗑</button>':'')+'</td></tr>';}).join('')+
+    profiles_data.map(function(u){return '<tr><td>'+(u.email||'-')+'</td><td>'+(u.name||'-')+'</td><td><select class="form-select form-select-sm" id="role_'+u.id+'"><option value="member"'+(u.role==='member'?' selected':'')+'>成员</option><option value="admin"'+(u.role==='admin'?' selected':'')+'>管理员</option><option value="super_admin"'+(u.role==='super_admin'?' selected':'')+'>超级管理员</option></select></td><td>'+getCompanyNames(u.id)+'</td><td><span class="badge '+(u.status==='active'?'bg-success':'bg-warning')+'">'+(u.status||'-')+'</span></td><td style="white-space:nowrap"><button class="btn btn-sm btn-outline-primary" onclick="adminUpdateRole(\''+u.id+'\')">💾</button>'+(isSuperAdmin?' <button class="btn btn-sm btn-outline-secondary" onclick="adminAssignCompanies(\''+u.id+'\')" title="修改所属公司">🏢</button>':'')+(u.id!==currentUser.id?' <button class="btn btn-sm btn-outline-'+(u.status==='active'?'warning':'success')+'" onclick="adminToggleStatus(\''+u.id+'\',\''+u.status+'\')">'+(u.status==='active'?'⏸':'▶')+'</button> <button class="btn btn-sm btn-outline-danger" onclick="adminDeleteUser(\''+u.id+'\')">🗑</button>':'')+'</td></tr>';}).join('')+
     '</tbody></table></div>'+
     '<hr><h6>📊 费用统计</h6><div id="adminStatsContent"><p class="text-muted">加载中...</p></div>'+
     '<hr><h6>📧 邀请新用户</h6><div class="row g-2"><div class="col-md-3"><input class="form-control" id="inviteEmail" placeholder="邮箱"></div><div class="col-md-2"><input class="form-control" id="inviteName" placeholder="名称"></div><div class="col-md-2"><select class="form-select" id="inviteRole"><option value="member">成员</option><option value="admin">管理员</option></select></div><div class="col-md-3" id="inviteCompanyCheckboxes">'+(companies.map(function(c){return '<label class="form-check-label me-2" style="font-size:13px;color:#555"><input type="checkbox" class="invite-company-cb" value="'+c.id+'" checked> '+(c.short_name||c.name)+'</label>';}).join('')||'<span class="text-muted">暂无公司</span>')+'</div><div class="col-md-3"><button class="btn btn-primary w-100" onclick="inviteUser()">邀请</button></div></div>';
@@ -1674,12 +1674,14 @@ function adminAssignCompanies(userId) {
     var existingIds = (result.data || []).map(function(uc){return uc.company_id;});
     var overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.4);z-index:9999;display:flex;align-items:center;justify-content:center';
+    overlay.setAttribute('data-company-overlay','1');
     var box = document.createElement('div');
     box.style.cssText = 'background:white;border-radius:12px;padding:24px;max-width:400px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,0.2)';
-    box.innerHTML = '<h5 style="margin-bottom:16px">\u5206\u914d\u516c\u53f8</h5>' +
-      companies.map(function(c){
+    box.innerHTML = '<h5 style="margin-bottom:8px">\u5206\u914d\u516c\u53f8</h5>' +
+      '<p style="font-size:12px;color:#666;margin-bottom:12px">\u4fee\u6539\u540e\u65b0\u53d1\u7968\u5f52\u65b0\u516c\u53f8\uff1b\u5df2\u63d0\u4ea4/\u5df2\u5ba1\u6279\u7684\u53d1\u7968\u4ecd\u5f52\u539f\u516c\u53f8\u3002</p>' +
+      (companies.map(function(c){
         return '<label style="display:block;padding:8px 0;font-size:14px;cursor:pointer"><input type="checkbox" class="assign-company-cb" value="'+c.id+'" '+(existingIds.indexOf(c.id)>=0?'checked':'')+'> '+(c.short_name||c.name)+'</label>';
-      }).join('') +
+      }).join('') || '<p class="text-muted">\u6682\u65e0\u516c\u53f8</p>') +
       '<div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end">' +
       '  <button class="btn btn-secondary" onclick="this.parentElement.parentElement.parentElement.remove()">\u53d6\u6d88</button>' +
       '  <button class="btn btn-primary" onclick="saveAssignCompanies(\''+userId+'\',this)">\u4fdd\u5b58</button>' +
@@ -1690,7 +1692,7 @@ function adminAssignCompanies(userId) {
 }
 
 async function saveAssignCompanies(userId, btn) {
-  var overlay = btn.closest('[style*="position:fixed"]');
+  var overlay = btn.closest('[data-company-overlay]');
   var cbs = document.querySelectorAll('.assign-company-cb:checked');
   var ids = [];
   cbs.forEach(function(cb){ids.push(parseInt(cb.value));});

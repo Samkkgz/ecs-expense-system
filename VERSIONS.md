@@ -1,5 +1,16 @@
 # ECS Expense System - Version History
 
+## v4.17.0 (2026-07-31) - 当前版本 ✅
+**改动**：超级管理员可修改用户所属公司；一次性迁移 `sam.lu@bsctradingltd.top` 及其名下发票到逸创网络
+
+### 关键变更
+- 管理员面板新增「修改所属公司」按钮（仅超级管理员可见），复用 `admin_assign_user_companies` RPC
+- 修改公司后：新发票归属新公司；已提交/已审批的历史发票仍归属原公司（`invoices.company_id` 在创建时写入，不做自动迁移）
+- 一次性数据修正：`sam.lu@bsctradingltd.top` 名下 18 张待审批发票从逸创奥(2)迁至逸创网络(1)，并补上该公司归属
+- 数据修正脚本：`nas/sql/migration-v4.17-sam-lu-company-fix.sql`
+
+---
+
 ## v4.16.2 (2026-07-31) - 当前版本 ✅
 **改动**：成员可删除/批量删除自己的待提交、待审批、已驳回发票
 
