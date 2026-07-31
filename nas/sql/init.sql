@@ -931,7 +931,7 @@ $fn$;
 CREATE POLICY "invoices_delete_member" ON public.invoices
   FOR DELETE USING (
     uploaded_by = auth.uid()
-    AND status IN ('draft','rejected')
+    AND status IN ('draft','rejected','pending')
   );
 
 CREATE POLICY "storage_objects_delete_member" ON storage.objects
@@ -941,7 +941,7 @@ CREATE POLICY "storage_objects_delete_member" ON storage.objects
       SELECT 1
       FROM public.invoices i
       WHERE i.uploaded_by = auth.uid()
-        AND i.status IN ('draft','rejected')
+        AND i.status IN ('draft','rejected','pending')
         AND (i.storage_path = storage.objects.name
              OR i.storage_path = 'invoices/' || storage.objects.name)
     )
@@ -996,7 +996,7 @@ BEGIN
   IF NOT public.is_admin_or_service() THEN
     IF NOT EXISTS (
       SELECT 1 FROM public.invoices
-      WHERE id = p_id AND uploaded_by = auth.uid() AND status IN ('draft','rejected')
+      WHERE id = p_id AND uploaded_by = auth.uid() AND status IN ('draft','rejected','pending')
     ) THEN
       RAISE EXCEPTION '无删除权限';
     END IF;

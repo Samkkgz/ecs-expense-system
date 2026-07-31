@@ -1,4 +1,4 @@
-<!-- ECS v4.16 - OCR保持草稿 + 成员可删除草稿/驳回件 -->
+<!-- ECS v4.16.2 - 成员可删除/批量删除自己的待提交、待审批、已驳回发票 -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -77,7 +77,7 @@
 <!-- 主应用 -->
 <div class="app-layout" id="appLayout">
   <div class="sidebar">
-    <div class="sidebar-header"><h2>🧾 ECS 报销 <span style="font-size:11px;opacity:0.5">v4.16</span></h2><small>NAS 自托管版</small></div>
+    <div class="sidebar-header"><h2>🧾 ECS 报销 <span style="font-size:11px;opacity:0.5">v4.16.2</span></h2><small>NAS 自托管版</small></div>
     <div class="sidebar-company" style="padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.1)">
       <select id="companySelector" class="form-select form-select-sm" style="width:100%;background:rgba(255,255,255,0.12);color:#fff;border:none;border-radius:6px;padding:6px 8px;font-size:13px" onchange="switchCompany(parseInt(this.value))">
         <option value="">加载中...</option>
@@ -359,7 +359,7 @@ async function showApp() {
   document.getElementById('adminNavItem').style.display = currentUser.isAdmin ? 'flex' : 'none';
 
   var batchBtn = document.getElementById('batchDeleteBtn');
-  if (batchBtn) batchBtn.style.display = currentUser.isAdmin ? 'inline-block' : 'none';
+  if (batchBtn) batchBtn.style.display = 'inline-block';
   var cleanupBtn = document.getElementById('cleanupBtn');
   if (cleanupBtn) cleanupBtn.style.display = currentUser.isAdmin ? 'inline-block' : 'none';
   var reportNav = document.querySelector('.nav-item[data-page="reports"]');
@@ -791,7 +791,7 @@ async function loadInvoices() {
       var st = inv.status==='approved'?'badge-approved':inv.status==='rejected'?'bg-danger':inv.status==='draft'?'bg-secondary':'badge-pending';
       var stText = inv.status==='approved'?'已通过':inv.status==='rejected'?'已驳回':inv.status==='draft'?'待提交':'待审批';
       var ckd = selectedInvoices.has(inv.id)?' checked':'';
-      var canDelete = currentUser.isAdmin || (!currentUser.isAdmin && (inv.status==='draft' || inv.status==='rejected'));
+      var canDelete = currentUser.isAdmin || (!currentUser.isAdmin && (inv.status==='draft' || inv.status==='rejected' || inv.status==='pending'));
       var delBtn = canDelete ? ' <button class="btn btn-sm btn-outline-danger" onclick="deleteInvoice('+inv.id+')">✕</button>' : '';
       return '<tr><td><input type="checkbox" class="inv-checkbox" data-id="'+inv.id+'" onchange="toggleSelect('+inv.id+',this.checked)"'+ckd+'></td><td><small>'+(inv.invoice_number||'-')+'</small></td><td><small>'+(inv.invoice_date||'-')+'</small></td><td><small>'+(inv.seller_name||'-').substring(0,20)+'</small></td><td><strong>¥'+parseFloat(inv.total_amount||0).toFixed(2)+'</strong></td><td><span class="badge bg-secondary">'+(cat?cat.name:'未分类')+'</span></td><td><span class="badge-status '+st+'">'+stText+'</span></td><td style="white-space:nowrap"><button class="btn btn-sm btn-outline-info" onclick="ocrInvoice('+inv.id+')" title="OCR识别">↻</button> <button class="btn btn-sm btn-outline-primary" onclick="editInvoice('+inv.id+')">✎</button>'+delBtn+'</td></tr>';
     }).join('');
@@ -987,8 +987,8 @@ async function rejectInvoice() {
 
 async function deleteInvoice(id) {
   var inv = allInvoices.find(function(i){return i.id===id;});
-  if (!currentUser.isAdmin && (!inv || (inv.status !== 'draft' && inv.status !== 'rejected'))) {
-    showToast('只有待提交/已驳回的发票可以删除','warning');
+  if (!currentUser.isAdmin && (!inv || (inv.status !== 'draft' && inv.status !== 'rejected' && inv.status !== 'pending'))) {
+    showToast('只有待提交/待审批/已驳回的发票可以删除','warning');
     return;
   }
   if (!confirm('确认删除？')) return;
@@ -996,9 +996,15 @@ async function deleteInvoice(id) {
 }
 // 批量删除已勾选的发票
 async function deleteSelectedInvoices() {
-  if (!currentUser.isAdmin) { showToast('无删除权限','danger'); return; }
   var ids = Array.from(selectedInvoices);
   if (!ids.length) { showToast('请先勾选发票','warning'); return; }
+  if (!currentUser.isAdmin) {
+    ids = ids.filter(function(id){
+      var inv = allInvoices.find(function(i){return i.id===id;});
+      return inv && (inv.status==='draft' || inv.status==='rejected' || inv.status==='pending');
+    });
+    if (!ids.length) { showToast('勾选的发票当前不可删除','warning'); return; }
+  }
   if (!confirm('确认删除选中的 ' + ids.length + ' 张发票？此操作不可撤销！')) return;
   showToast('正在删除 ' + ids.length + ' 张发票...','info');
   var ok = 0, fail = [];

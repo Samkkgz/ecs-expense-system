@@ -1,5 +1,15 @@
 # ECS Expense System - Version History
 
+## v4.16.2 (2026-07-31) - 当前版本 ✅
+**改动**：成员可删除/批量删除自己的待提交、待审批、已驳回发票
+
+### 关键变更
+- 成员删除范围从 draft/rejected 扩展到 draft/rejected/pending（已通过仍锁定）
+- 发票列表“删除选中”对成员开放，仅可删除自己名下可删除状态的发票
+- 迁移脚本：`nas/sql/migration-v4.16.2-member-delete-pending.sql`
+
+---
+
 ## v4.16.1 (2026-07-31)
 **改动**：发票自动上传归属调整
 
