@@ -1,4 +1,4 @@
-<!-- ECS v4.19.0 - 审批中心增加用户筛选 -->
+<!-- ECS v4.19.1 - 自动上传守护进程稳定性修复 -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -928,7 +928,7 @@ async function editInvoice(id) {
   var saveBtn = document.getElementById('saveBtn');
   if (saveBtn) saveBtn.style.display = (currentUser.isAdmin ? inv.status !== 'approved' : (inv.status === 'draft' || inv.status === 'rejected')) ? 'inline-block' : 'none';
   var submitBtn = document.getElementById('submitBtn');
-  if (submitBtn) submitBtn.style.display = (!currentUser.isAdmin && (inv.status === 'draft' || inv.status === 'rejected')) ? 'inline-block' : 'none';
+  if (submitBtn) submitBtn.style.display = (inv.status === 'draft' || inv.status === 'rejected') ? 'inline-block' : 'none';
   var approveBtn = document.getElementById('approveBtn');
   if (approveBtn) approveBtn.style.display = (currentUser.isAdmin && inv.status === 'pending') ? 'inline-block' : 'none';
   var rejectBtn = document.getElementById('rejectBtn');
@@ -977,7 +977,6 @@ async function saveInvoiceEdit() {
 
 async function submitInvoice() {
   if (!editingInvoiceId) return;
-  if (currentUser.isAdmin) { showToast('管理员无需提交审批','info'); return; }
   var inv = allInvoices.find(function(i){return i.id===editingInvoiceId;});
   if (!inv || (inv.status !== 'draft' && inv.status !== 'rejected')) { showToast('当前状态不能提交审批','warning'); return; }
   var {error} = await sb.from('invoices').update({status:'pending'}).eq('id',editingInvoiceId);

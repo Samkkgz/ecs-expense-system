@@ -106,10 +106,8 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%m-%d %H:%M:%S",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler(LOG_FILE, encoding="utf-8"),
-    ],
+    filename=LOG_FILE,
+    encoding="utf-8",
 )
 log = logging.getLogger("auto_upload_invoices")
 
@@ -984,6 +982,21 @@ def cleanup():
         os.remove(PID_FILE)
 
 
+def _pid_alive(pid):
+    """检查 PID 对应的进程是否存活"""
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="ECS 发票自动上传监听脚本 — 检测新发票并上传至 NAS"
@@ -1069,6 +1082,16 @@ def main():
         os.chdir(os.path.dirname(LOG_FILE))
 
     atexit.register(cleanup)
+    # 防止双实例：PID 文件对应进程仍存活时，新实例直接退出
+    if os.path.exists(PID_FILE):
+        try:
+            with open(PID_FILE) as f:
+                old_pid = int(f.read().strip())
+            if _pid_alive(old_pid) and old_pid != os.getpid():
+                log.error(f"已有运行实例 (PID {old_pid})，本次启动退出")
+                sys.exit(1)
+        except (ValueError, OSError):
+            pass
     with open(PID_FILE, "w") as f:
         f.write(str(os.getpid()))
 
