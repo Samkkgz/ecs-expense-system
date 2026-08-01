@@ -280,8 +280,12 @@ BEGIN
         RAISE EXCEPTION '普通用户只能提交待审批';
       END IF;
     ELSE
-      IF NOT (OLD.status = 'pending' AND NEW.status IN ('approved','rejected')) THEN
-        RAISE EXCEPTION '管理员只能审批待审批发票';
+      IF (OLD.status = 'pending' AND NEW.status IN ('approved','rejected')) THEN
+        NULL; -- 审批待审批发票
+      ELSIF (OLD.status IN ('draft','rejected') AND NEW.status = 'pending') THEN
+        NULL; -- 管理员提交审批（自动上传的草稿发票）
+      ELSE
+        RAISE EXCEPTION '管理员只能提交待审批或审批待审批发票';
       END IF;
     END IF;
   ELSE
@@ -909,8 +913,12 @@ BEGIN
         RAISE EXCEPTION '普通用户只能提交待审批';
       END IF;
     ELSE
-      IF NOT (OLD.status = 'pending' AND NEW.status IN ('approved','rejected')) THEN
-        RAISE EXCEPTION '管理员只能审批待审批发票';
+      IF (OLD.status = 'pending' AND NEW.status IN ('approved','rejected')) THEN
+        NULL; -- 审批待审批发票
+      ELSIF (OLD.status IN ('draft','rejected') AND NEW.status = 'pending') THEN
+        NULL; -- 管理员提交审批（自动上传的草稿发票）
+      ELSE
+        RAISE EXCEPTION '管理员只能提交待审批或审批待审批发票';
       END IF;
     END IF;
   ELSE

@@ -7,6 +7,8 @@
 - launchd 改为前台直接管理（去掉 `--daemon`），KeepAlive=true 真正生效，进程退出/崩溃 30 秒内自动重启
 - 新增单实例互斥：PID 文件对应进程仍存活时，新实例直接退出，杜绝双进程同时写日志/抢上传
 - 日志去重：logging 只保留 FileHandler，不再与 stdout 重定向双写
+- 自动上传发票归属到 sam.lu@ecsomni.com 超级管理员名下
+- 管理员（super_admin）可在编辑弹窗提交草稿发票审批（draft/rejected → pending），触发器 `prevent_member_status_change` 同步更新
 - 上传 `Aug 2026/` 目录 2 张新发票（26442000008836984291、发票金额58元）
 
 ### 相关文件
