@@ -80,6 +80,8 @@ def _headers(extra=None):
 
 PID_FILE = "/tmp/auto_upload_invoices.pid"
 LOG_FILE = "/tmp/auto_upload_invoices.log"
+HEARTBEAT_FILE = "/tmp/auto_upload_invoices.heartbeat"
+HEARTBEAT_INTERVAL = 300        # 心跳日志间隔（秒）
 SCAN_INTERVAL = 5            # 扫描间隔（秒）
 STABLE_INTERVAL = 1.0        # 文件稳定性检测间隔
 STABLE_COUNT = 3             # 连续稳定才算写完
@@ -997,6 +999,15 @@ def _pid_alive(pid):
         return False
 
 
+def write_heartbeat():
+    """写入心跳时间戳，供外部看门狗检测进程是否假死。"""
+    try:
+        with open(HEARTBEAT_FILE, "w", encoding="ascii") as f:
+            f.write(f"{time.time():.0f}\n")
+    except OSError as e:
+        log.warning(f"心跳文件写入失败: {e}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="ECS 发票自动上传监听脚本 — 检测新发票并上传至 NAS"
@@ -1173,61 +1184,70 @@ def main():
     # 监听循环
     log.info(f"监听中（每 {args.interval} 秒扫描一次）...")
     count = 0
+    loop_start = time.monotonic()
+    last_heartbeat_log = loop_start
     try:
         while True:
-            time.sleep(args.interval)
-            
-            # ======== v4.8：定时重试 _failed/ 目录 ========
-            global _last_failed_retry
-            if count - _last_failed_retry >= FAILED_RETRY_INTERVAL // args.interval:
-                _last_failed_retry = count
-                retry_failed_files(watch_dir, conn)
-            
-            # ======== v4.8：NAS 连通性检查（指数退避） ========
-            if _nas_down_since > 0:
-                delay = _get_backoff_delay()
-                backoff_elapsed = time.time() - _nas_down_since
-                if backoff_elapsed < delay:
-                    continue
-                alive = _check_nas_alive()
-                if not alive:
-                    continue
-            
-
-            # 重置周期去重集（防止同一个扫描周期内处理同名文件的两份副本）
-            # 注意：此去重集生存周期为一个扫描周期，跨周期由 check_nas_duplicate 处理
-            seen_in_cycle = set()
-            files = scan_directory(watch_dir, conn)
-            
-            # ======== v4.8：快速路径 — 无文件时心跳检测 NAS ========
-            if not files:
-                if count % 30 == 0 and _nas_down_since <= 0:
-                    _check_nas_alive()
-                continue
-            
-
-            for fpath in files:
-                basename = os.path.basename(fpath)
-                fsize = os.path.getsize(fpath)
-                cycle_key = f"{basename}:{fsize}"
-                if cycle_key in seen_in_cycle:
-                    log.info(f"⏭ 跳过（本周期已处理同名同大小文件）: {os.path.relpath(fpath, os.path.abspath(watch_dir))}")
-                    # 记录到本地去重库，避免下一周期再扫描
-                    rel = os.path.relpath(fpath, os.path.abspath(watch_dir))
-                    fhash = compute_hash(fpath)
-                    upsert_record(conn, rel, fhash, fsize, os.path.getmtime(fpath))
-                    continue
-                seen_in_cycle.add(cycle_key)
-                try:
-                    process_file(fpath, conn)
-                except Exception as e:
-                    log.error(f"⚠ 处理文件异常: {os.path.relpath(fpath, os.path.abspath(watch_dir))} → {e}")
-                    import traceback
-                    log.error(traceback.format_exc())
             count += 1
-            if count % 120 == 0:  # 约10分钟一次心跳
-                elapsed_sec = args.interval * count
-                log.info(f"心跳: 持续监听中...（{elapsed_sec}秒）")
+            write_heartbeat()
+
+            now = time.monotonic()
+            if now - last_heartbeat_log >= HEARTBEAT_INTERVAL:
+                last_heartbeat_log = now
+                log.info(f"心跳: 监听正常（已运行 {now - loop_start:.0f} 秒，扫描 {count} 次）")
+
+            time.sleep(args.interval)
+
+            try:
+                # ======== v4.8：定时重试 _failed/ 目录 ========
+                global _last_failed_retry
+                if count - _last_failed_retry >= FAILED_RETRY_INTERVAL // args.interval:
+                    _last_failed_retry = count
+                    retry_failed_files(watch_dir, conn)
+
+                # ======== v4.8：NAS 连通性检查（指数退避） ========
+                if _nas_down_since > 0:
+                    delay = _get_backoff_delay()
+                    backoff_elapsed = time.time() - _nas_down_since
+                    if backoff_elapsed < delay:
+                        continue
+                    alive = _check_nas_alive()
+                    if not alive:
+                        continue
+
+                # 重置周期去重集（防止同一个扫描周期内处理同名文件的两份副本）
+                # 注意：此去重集生存周期为一个扫描周期，跨周期由 check_nas_duplicate 处理
+                seen_in_cycle = set()
+                files = scan_directory(watch_dir, conn)
+
+                # ======== v4.8：快速路径 — 无文件时心跳检测 NAS ========
+                if not files:
+                    if count % 30 == 0 and _nas_down_since <= 0:
+                        _check_nas_alive()
+                    continue
+
+                for fpath in files:
+                    basename = os.path.basename(fpath)
+                    fsize = os.path.getsize(fpath)
+                    cycle_key = f"{basename}:{fsize}"
+                    if cycle_key in seen_in_cycle:
+                        log.info(f"⏭ 跳过（本周期已处理同名同大小文件）: {os.path.relpath(fpath, os.path.abspath(watch_dir))}")
+                        # 记录到本地去重库，避免下一周期再扫描
+                        rel = os.path.relpath(fpath, os.path.abspath(watch_dir))
+                        fhash = compute_hash(fpath)
+                        upsert_record(conn, rel, fhash, fsize, os.path.getmtime(fpath))
+                        continue
+                    seen_in_cycle.add(cycle_key)
+                    try:
+                        process_file(fpath, conn)
+                    except Exception as e:
+                        log.error(f"⚠ 处理文件异常: {os.path.relpath(fpath, os.path.abspath(watch_dir))} → {e}")
+                        import traceback
+                        log.error(traceback.format_exc())
+            except Exception as e:
+                log.error(f"⚠ 扫描循环异常: {e}")
+                import traceback
+                log.error(traceback.format_exc())
     except KeyboardInterrupt:
         log.info("用户手动停止")
 

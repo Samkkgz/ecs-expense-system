@@ -1,5 +1,29 @@
 # ECS Expense System - Version History
 
+## v4.19.2 (2026-08-03) - 当前版本 ✅
+**改动**：修复自动上传监听进程「假死」导致新下载发票不自动上传，新增心跳看门狗防复发
+
+### 背景与根因
+- 2026-08-03 复发：15:43 上传完上一批发票后，监听进程在 `time.sleep` 中不再唤醒，进程存活、CPU 零增长、无任何日志/网络活动，18:41 新下载的 2 张发票未被扫描上传
+- KeepAlive 只能检测「进程崩溃退出」，无法检测「进程存活但不工作」的假死
+- 主循环 `count` 只在有文件待处理时才递增，空闲时心跳日志和 `_failed/` 30 分钟重试永不触发，故障时完全无观测信号
+
+### 关键变更
+- 监听进程新增心跳：每个扫描周期写入 `/tmp/auto_upload_invoices.heartbeat`，每 5 分钟输出一条心跳日志（修复 count 计数 bug，空闲期也递增）
+- 新增 `nas/scripts/watchdog.py` 看门狗：检测进程未运行或心跳超 300 秒（假死）时，`launchctl kickstart -k` 自动重启监听
+- 新增 launchd 定时任务 `com.ecs.auto-upload-watchdog`（每 5 分钟运行一次），`enable-auto` / `disable-auto` 同步管理
+- 扫描循环增加兜底异常捕获，单次扫描异常只记录日志，不再让整个进程静默退出
+- 已补传 2026-08-03 下载的 2 张发票（`26447000001524264216.pdf`、`26447000001520628669.pdf`）
+
+### 相关文件
+- `nas/scripts/auto_upload_invoices.py`
+- `nas/scripts/watchdog.py`（新增）
+- `nas/scripts/com.ecs.auto-upload-watchdog.plist`（新增）
+- `nas/scripts/control.sh`
+- `VERSIONS.md`
+
+---
+
 ## v4.19.1 (2026-08-01) - 当前版本 ✅
 **改动**：修复自动上传守护进程死后不自启 + 日志重复 + 双实例问题
 

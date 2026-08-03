@@ -1,6 +1,7 @@
 # OS
 .DS_Store
 Thumbs.db
+nas/scripts/_upload_log.db
 
 # Python
 __pycache__/
