@@ -268,6 +268,45 @@ def supabase_api(path, method="GET", body=None):
         return True, result
     return False, str(result)
 
+
+def find_duplicate_invoice(parsed, invoice_id):
+    """v4.19.3 发票号级去重：按发票号码查找同号的其他记录（排除自身）。
+    Returns: 已存在的记录 dict 或 None
+    """
+    num = (parsed.get("invoice_number") or "").strip()
+    if not num:
+        return None
+    q = f"invoices?select=id,storage_path&invoice_number=eq.{urllib.parse.quote(num)}&id=neq.{invoice_id}&limit=1"
+    ok, rows = supabase_api(q, "GET")
+    if ok and isinstance(rows, list) and rows:
+        return rows[0]
+    return None
+
+
+def delete_invoice_with_storage(invoice_id, storage_path):
+    """删除数据库记录，并尽力清理对应的 Storage 文件（失败不阻塞）。"""
+    try:
+        supabase_api(f"invoices?id=eq.{invoice_id}", "DELETE")
+    except Exception:
+        pass
+    if storage_path:
+        try:
+            url = f"http://storage:5000/object/invoices/{storage_path}"
+            headers = {"apikey": SERVICE_KEY, "Authorization": f"Bearer {SERVICE_KEY}"}
+            req = urllib.request.Request(url, headers=headers, method="DELETE")
+            with urllib.request.urlopen(req, timeout=15):
+                pass
+        except Exception:
+            pass
+
+
+def merge_duplicate_invoice(invoice_id, storage_path, existing, updates):
+    """发票重复时：删除当前记录，把 OCR 数据合并到已存在的旧记录。"""
+    delete_invoice_with_storage(invoice_id, storage_path)
+    supabase_api(f"invoices?id=eq.{existing['id']}", "PATCH", updates)
+    return existing
+
+
 class OCRHandler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         self.send_response(200)
@@ -329,6 +368,14 @@ class OCRHandler(BaseHTTPRequestHandler):
                 if parsed.get("project_location"):
                     updates["project_location"] = parsed["project_location"]
 
+                # v4.19.3 发票号级去重：同号已存在时合并到旧记录并删除当前
+                dup = find_duplicate_invoice(parsed, invoice_id)
+                if dup:
+                    merge_duplicate_invoice(invoice_id, storage_path, dup, updates)
+                    print(f"[OCR] 检测到重复发票号 {parsed.get('invoice_number')}，已合并到 ID {dup['id']} 并删除 ID {invoice_id}", flush=True)
+                    self._json(200, {"success": True, "data": {**parsed, "id": dup["id"], "merged": True}, "raw": str(ocr_data)[:500], "merged": True, "merged_id": dup["id"], "db_save": True})
+                    return
+
                 ok, api_result = supabase_api(f"invoices?id=eq.{invoice_id}", "PATCH", updates)
                 if not ok:
                     print(f"[OCR] DB save failed: {api_result}", flush=True)
@@ -369,6 +416,13 @@ class OCRHandler(BaseHTTPRequestHandler):
                     for k in ["invoice_number","invoice_date","seller_name","total_amount","project_location"]:
                         v = parsed.get(k)
                         if v: updates[k] = v
+                    # v4.19.3 发票号级去重：同号已存在时合并到旧记录并删除当前
+                    dup = find_duplicate_invoice(parsed, invoice_id)
+                    if dup:
+                        merge_duplicate_invoice(invoice_id, storage_path, dup, updates)
+                        print(f"[OCR] 检测到重复发票号 {parsed.get('invoice_number')}，已合并到 ID {dup['id']} 并删除 ID {invoice_id}", flush=True)
+                        self._json(200, {"success": True, "data": {**parsed, "id": dup["id"], "merged": True}, "raw": str(ocr_data)[:500], "merged": True, "merged_id": dup["id"]})
+                        return
                     supabase_api(f"invoices?id=eq.{invoice_id}", "PATCH", updates)
                     self._json(200, {"success": True, "data": parsed, "raw": str(ocr_data)[:500]})
                     return

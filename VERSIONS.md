@@ -1,5 +1,30 @@
 # ECS Expense System - Version History
 
+## v4.19.3 (2026-08-11)
+**改动**：修复重复发票清理不掉 + 上传时按发票号过滤重复（照片/PDF 双通道重复）
+
+### 背景与根因
+- 生产库出现 3 组同发票号重复（如 `26117000001150356644` 有 2 条：照片 `IMG_9182.JPG` 与自动下载的 PDF `:26117000001150356644_小米官方旗舰店.pdf`），另一组各有 3 条
+- 所有查重逻辑（前端上传、自动上传脚本、insert_invoice RPC、清理按钮、数据库唯一索引）都只按 `original_filename + file_size (+ company)` 判重
+- 同一张发票的照片和 PDF 文件名不同、大小不同 → 全部查重路径失效；"清理重复"按钮按同样键值分组，自然清不掉
+- NAS OCR 服务此前完全没有发票号级去重；云版 Edge Function 只有百度 OCR 路径有（PDF 文字提取路径缺失），且依赖手动触发
+
+### 关键变更
+- **上传时过滤**：前端（NAS+云版）与自动上传脚本在文件名含 20 位发票号码时，先查同号记录，已存在则跳过；OCR 识别后同号也合并
+- **OCR 去重**：NAS OCR 服务新增发票号级去重，识别出同号已存在时，合并 OCR 数据到旧记录并删除当前记录；云版 Edge Function 文字提取路径补齐同样逻辑
+- **清理按钮修复**：清理重复按钮/脚本优先按发票号分组（无号码时退回文件名+大小），照片+PDF 组合现在能被正确识别清理
+- **数据库兜底**：新增 `uq_invoices_invoice_number` 部分唯一索引（发票号非空即全局唯一），任何路径都无法再插入同号发票
+- **数据清理**：备份后清理 NAS 生产库 3 组重复，每组保留最新一条（存储文件保留）
+
+### 相关文件
+- `nas/index.html`、`cloud/index.html`
+- `nas/ocr-service/app.py`
+- `nas/scripts/auto_upload_invoices.py`
+- `nas/sql/migration-v4.19.3-unique-invoice-number.sql`（新增）
+- `cloud/schema.sql`、`cloud/supabase/functions/process-invoice/index.ts`
+
+---
+
 ## v4.19.2 (2026-08-03) - 当前版本 ✅
 **改动**：修复自动上传监听进程「假死」导致新下载发票不自动上传，新增心跳看门狗防复发
 

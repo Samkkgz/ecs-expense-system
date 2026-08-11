@@ -1,4 +1,4 @@
-<!-- ECS Cloud v4.7 - 新增财务类目功能 -->
+<!-- ECS Cloud v4.7.1 - 发票号级去重：上传过滤 + 清理重复修复 -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -959,6 +959,15 @@ async function init() {
         resultDiv.innerHTML += `<div class="alert alert-info">⏭ 已跳过重复文件: ${file.name}（之前已上传）</div>`;
         continue;
       }
+      // v4.7.1 发票号级查重：文件名含 20 位发票号码时，同号已存在则跳过
+      var numMatch = (file.name || '').match(/(\d{20})/);
+      if (numMatch) {
+        var { data: numDupes } = await sb.from('invoices').select('id').eq('invoice_number', numMatch[1]).limit(1);
+        if (numDupes && numDupes.length > 0) {
+          resultDiv.innerHTML += `<div class="alert alert-warning">⏭ 已跳过重复文件: ${file.name}（发票号 ${numMatch[1]} 已存在）</div>`;
+          continue;
+        }
+      }
 
       const pct = Math.round(((i) / files.length) * 100);
       bar.style.width = `${pct}%`;
@@ -1251,12 +1260,12 @@ async function init() {
 
   // ============================================================
     // ============================================================
-  // 清理重复发票（同文件名+同大小视为重复）
+  // 清理重复发票（同发票号或同文件名+同大小视为重复）
   // ============================================================
   async function cleanupDuplicates() {
-    if (!confirm('确定要清理重复上传的发票吗？同名同大小的文件只保留最新一份。')) return;
+    if (!confirm('确定要清理重复上传的发票吗？同名同大小或同发票号的只保留最新一份。')) return;
     
-    var cdQuery = sb.from('invoices').select('id, original_filename, file_size, created_at, storage_path');
+    var cdQuery = sb.from('invoices').select('id, original_filename, file_size, created_at, storage_path, invoice_number');
     if (!currentUser.isAdmin) {
       cdQuery = cdQuery.eq('uploaded_by', currentUser.id);
     }
@@ -1268,7 +1277,9 @@ async function init() {
     var deleteIds = [];
     
     for (var inv of allInvs) {
-      var key = inv.original_filename + '_' + (inv.file_size || 0);
+      // v4.7.1 优先按发票号判重（同一张发票的照片/PDF 文件名不同但号码相同），无号码时退回文件名+大小
+      var num = inv.invoice_number ? String(inv.invoice_number).trim() : '';
+      var key = num ? 'num_' + num : inv.original_filename + '_' + (inv.file_size || 0);
       if (seen[key]) {
         toDelete.push(inv.storage_path);
         deleteIds.push(inv.id);
@@ -1332,6 +1343,13 @@ async function init() {
       if (!funcRes.ok) { funcData.success = false; funcData.error = (funcData.error || '') + ' (HTTP ' + funcRes.status + ')'; }
       
       if (funcData.success && funcData.data) {
+        if (funcData.data.merged) {
+          btn.innerHTML = '✓';
+          showToast('⚠️ 检测到重复发票（' + (funcData.data.invoice_number || '') + '），已合并到原记录并删除本条', 'warning');
+          await loadInvoices();
+          if (funcData.data.id) editInvoice(funcData.data.id);
+          return;
+        }
         // 文字提取成功
         btn.innerHTML = '✓';
         Object.assign(inv, funcData.data);
@@ -1400,6 +1418,13 @@ async function init() {
       if (!ocrRes.ok) { ocrData.success = false; ocrData.error = (ocrData.error || '') + ' (HTTP ' + ocrRes.status + ')'; }
       
       if (ocrData.success && ocrData.data) {
+        if (ocrData.data.merged) {
+          btn.innerHTML = '✓';
+          showToast('⚠️ 检测到重复发票（' + (ocrData.data.invoice_number || '') + '），已合并到原记录并删除本条', 'warning');
+          await loadInvoices();
+          if (ocrData.data.id) editInvoice(ocrData.data.id);
+          return;
+        }
         btn.innerHTML = '✓';
         Object.assign(inv, ocrData.data);
         if (ocrData.data.invoice_date) inv.invoice_date = ocrData.data.invoice_date;

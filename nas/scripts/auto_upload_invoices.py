@@ -21,6 +21,7 @@ auto_upload_invoices.py — ECS 发票自动上传监听脚本（纯内置模块
 import os
 import sys
 import json
+import re
 import time
 import hashlib
 import sqlite3
@@ -361,12 +362,17 @@ def resolve_uploader_id():
 # ============================================================
 
 def check_nas_duplicate(original_filename, file_size):
-    """查询 NAS 数据库，检查是否已有相同文件名+大小的记录。
+    """查询 NAS 数据库，检查是否已有相同文件名+大小的记录，或文件名含 20 位发票号时同号已存在。
     
     GET /rest/v1/invoices?original_filename=eq.{name}&file_size=eq.{size}&select=id
     与前端上传前的 dupes 查询逻辑一致。
     """
     import urllib.parse
+    headers = _headers({
+        "apikey": SERVICE_KEY,
+        "Authorization": f"Bearer {SERVICE_KEY}",
+    })
+    # 检查1：同名同大小
     params = urllib.parse.urlencode({
         "select": "id",
         "original_filename": f"eq.{original_filename}",
@@ -374,19 +380,35 @@ def check_nas_duplicate(original_filename, file_size):
         "limit": "1",
     })
     url = f"{NAS_HOST}/rest/v1/invoices?{params}"
-    headers = _headers({
-        "apikey": SERVICE_KEY,
-        "Authorization": f"Bearer {SERVICE_KEY}",
-    })
     req = Request(url, headers=headers, method="GET")
     try:
         with urlopen(req, timeout=15) as resp:
             raw = resp.read()
             result = json.loads(raw) if raw else []
-            return len(result) > 0
+            if len(result) > 0:
+                return True
     except Exception as e:
-        log.warning(f"[查重] NAS 查询失败: {e}（跳过本次检查）")
-        return False
+        log.warning(f"[查重] NAS 同名同大小查询失败: {e}（继续发票号检查）")
+
+    # v4.19.3 检查2：文件名含 20 位发票号码时，同号已存在视为重复
+    # 典型场景：自动下载的 PDF 以「:26117000001150356644_小米官方旗舰店.pdf」命名，
+    # 但系统里已有该发票的照片（不同文件名/大小），旧逻辑无法发现
+    m = re.search(r"(\d{20})", original_filename or "")
+    if m:
+        num = m.group(1)
+        params2 = urllib.parse.urlencode({"select": "id", "invoice_number": f"eq.{num}", "limit": "1"})
+        url2 = f"{NAS_HOST}/rest/v1/invoices?{params2}"
+        req2 = Request(url2, headers=headers, method="GET")
+        try:
+            with urlopen(req2, timeout=15) as resp2:
+                raw2 = resp2.read()
+                result2 = json.loads(raw2) if raw2 else []
+                if len(result2) > 0:
+                    log.info(f"[查重] 发票号 {num} 已存在，视为重复文件")
+                    return True
+        except Exception as e:
+            log.warning(f"[查重] 发票号查询失败: {e}（跳过本次检查）")
+    return False
 
 
 
@@ -456,7 +478,8 @@ def _remove_nas_duplicate_if_exists(conn, rel_path, filename, file_size):
 def cleanup_nas_duplicates(dry_run=True):
     """检测并清理 NAS 数据库中重复的发票记录。
     
-    重复判定：相同 original_filename + file_size
+    重复判定：v4.19.3 起优先按 invoice_number（发票号）判重；
+    无发票号时退回 original_filename + file_size（同名同大小）。
     策略：保留最早创建的记录，删除后续重复记录（只清理数据库，不操作本地文件）。
     
     Args:
@@ -476,7 +499,7 @@ def cleanup_nas_duplicates(dry_run=True):
     # 第1步：获取 count 按 filename+size 分组的重复项
     import urllib.parse
     params = urllib.parse.urlencode({
-        "select": "id,original_filename,file_size,created_at,invoice_date,total_amount,storage_path",
+        "select": "id,original_filename,file_size,created_at,invoice_date,total_amount,storage_path,invoice_number",
         "order": "original_filename.asc",
     })
     url = f"{base_url}?{params}"
@@ -488,10 +511,14 @@ def cleanup_nas_duplicates(dry_run=True):
         log.error(f"[清理] 查询发票列表失败: {e}")
         return 0, 0
     
-    # 按 (filename, size) 分组
+    # 按 (发票号 | 文件名+大小) 分组
     groups = {}
     for r in all_records:
-        key = (r.get("original_filename", ""), r.get("file_size", 0))
+        num = (r.get("invoice_number") or "").strip()
+        if num:
+            key = ("num", num)
+        else:
+            key = ("file", r.get("original_filename", ""), r.get("file_size", 0))
         groups.setdefault(key, []).append(r)
     
     # 找出有重复的分组
@@ -502,8 +529,11 @@ def cleanup_nas_duplicates(dry_run=True):
         return 0, 0
     
     log.info(f"[清理] 发现 {len(dup_groups)} 组重复，共涉及 {sum(len(v) for v in dup_groups)} 条记录:")
-    for (fname, fsize), records in dup_groups.items():
-        log.info(f"  📄 {fname} ({fsize} bytes) × {len(records)} 条")
+    for key, records in dup_groups.items():
+        if key[0] == "num":
+            log.info(f"  📄 发票号 {key[1]} × {len(records)} 条")
+        else:
+            log.info(f"  📄 {key[1]} ({key[2]} bytes) × {len(records)} 条")
         for r in records:
             log.info(f"      ID: {r.get('id')} | 日期: {r.get('invoice_date','-')} | 金额: {r.get('total_amount','-')}")
     
@@ -513,11 +543,12 @@ def cleanup_nas_duplicates(dry_run=True):
     
     # 非 dry_run：执行删除
     deleted = 0
-    for (fname, fsize), records in dup_groups.items():
+    for key, records in dup_groups.items():
         # 按 created_at 排序，保留最早的
         records_sorted = sorted(records, key=lambda r: r.get("created_at", ""))
         keep = records_sorted[0]
         to_delete = records_sorted[1:]
+        label = f"发票号 {key[1]}" if key[0] == "num" else f"{key[1]} ({key[2]} bytes)"
         
         for rec in to_delete:
             rec_id = rec.get("id")
@@ -528,7 +559,7 @@ def cleanup_nas_duplicates(dry_run=True):
             del_req = Request(del_url, headers=headers, method="DELETE")
             try:
                 with urlopen(del_req, timeout=15) as resp:
-                    log.info(f"    🗑 删除记录: {fname} (ID: {rec_id})")
+                    log.info(f"    🗑 删除记录: {label} (ID: {rec_id})")
                 
                 # 只清理数据库记录，不操作本地文件
                 deleted += 1

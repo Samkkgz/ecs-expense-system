@@ -44,7 +44,10 @@ serve(async (req) => {
 
     // 文字提取成功，解析并保存
     const data = parseInvoiceText(rawText);
-    await saveParsedData(supabase, invoiceId, rawText, data, 0.85);
+    const r1 = await saveParsedWithDedup(supabase, invoiceId, rawText, data, 0.85);
+    if (r1.merged) {
+      return new Response(JSON.stringify({ success: true, data: Object.assign(data, { id: r1.existingId, merged: true }) }), { headers: { "Content-Type": "application/json", ...corsHeaders() } });
+    }
     return new Response(JSON.stringify({ success: true, data }), { headers: { "Content-Type": "application/json", ...corsHeaders() } });
   } catch (e) {
     return new Response(JSON.stringify({ success: false, error: e.message }), { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders() } });
@@ -96,26 +99,12 @@ async function processBaiduOCR(supabase: any, invoiceId: number, imageBase64: st
   // 4. 解析OCR结果
   const data = parseBaiduOCRResult(ocrResult);
 
-  // 5. 发票号码去重：如果相同号码已存在，合并到旧记录并删除当前
-  if (data.invoice_number) {
-    const { data: existing } = await supabase.from("invoices")
-      .select("id, storage_path")
-      .eq("invoice_number", data.invoice_number)
-      .neq("id", invoiceId)
-      .limit(1);
-    if (existing && existing.length > 0) {
-      // 删除当前重复记录（保留旧记录）
-      await supabase.from("invoices").delete().eq("id", invoiceId);
-      await supabase.storage.from("invoices").remove([record.storage_path]).catch(() => {});
-      // 更新旧记录
-      await saveParsedData(supabase, existing[0].id, JSON.stringify(ocrResult), data, 0.9);
-      return new Response(JSON.stringify({ success: true, data: Object.assign(data, { id: existing[0].id, merged: true }) }), { headers: { "Content-Type": "application/json", ...corsHeaders() } });
-    }
-  }
-
-  // 6. 保存到数据库
+  // 5+6. 发票号码去重并保存：同号已存在时合并到旧记录并删除当前
   const rawText = JSON.stringify(ocrResult);
-  await saveParsedData(supabase, invoiceId, rawText, data, 0.9);
+  const r2 = await saveParsedWithDedup(supabase, invoiceId, rawText, data, 0.9);
+  if (r2.merged) {
+    return new Response(JSON.stringify({ success: true, data: Object.assign(data, { id: r2.existingId, merged: true }) }), { headers: { "Content-Type": "application/json", ...corsHeaders() } });
+  }
 
   return new Response(JSON.stringify({ success: true, data }), { headers: { "Content-Type": "application/json", ...corsHeaders() } });
 }
@@ -285,6 +274,31 @@ async function saveParsedData(supabase: any, invoiceId: number, rawText: string,
   await supabase.from("invoices").update(upd).eq("id", invoiceId);
   await autoCategorize(supabase, invoiceId, data);
   if (data.invoice_date) await refreshReports(supabase, data.invoice_date);
+}
+
+// v4.7.1 发票号级去重：如果相同发票号码已存在，合并 OCR 数据到旧记录并删除当前记录
+// 返回 { merged, existingId }；merged=true 时调用方应返回 existingId 给前端提示
+async function saveParsedWithDedup(supabase: any, invoiceId: number, rawText: string, data: any, confidence: number) {
+  if (data.invoice_number) {
+    const { data: existing } = await supabase.from("invoices")
+      .select("id")
+      .eq("invoice_number", data.invoice_number)
+      .neq("id", invoiceId)
+      .limit(1);
+    if (existing && existing.length > 0) {
+      // 删除当前重复记录（保留旧记录），先取当前记录的文件路径以便清理 Storage
+      const { data: cur } = await supabase.from("invoices").select("storage_path").eq("id", invoiceId).maybeSingle();
+      await supabase.from("invoices").delete().eq("id", invoiceId);
+      if (cur?.storage_path) {
+        await supabase.storage.from("invoices").remove([cur.storage_path]).catch(() => {});
+      }
+      // 更新旧记录
+      await saveParsedData(supabase, existing[0].id, rawText, data, confidence);
+      return { merged: true, existingId: existing[0].id };
+    }
+  }
+  await saveParsedData(supabase, invoiceId, rawText, data, confidence);
+  return { merged: false, existingId: invoiceId };
 }
 
 // 中国主要城市列表（用于从商家名称中提取城市）

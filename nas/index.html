@@ -1,4 +1,4 @@
-<!-- ECS v4.19.1 - 自动上传守护进程稳定性修复 -->
+<!-- ECS v4.19.3 - 发票号级去重：上传过滤 + 清理重复修复 -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -77,7 +77,7 @@
 <!-- 主应用 -->
 <div class="app-layout" id="appLayout">
   <div class="sidebar">
-    <div class="sidebar-header"><h2>🧾 ECS 报销 <span style="font-size:11px;opacity:0.5">v4.19.0</span></h2><small>NAS 自托管版</small></div>
+    <div class="sidebar-header"><h2>🧾 ECS 报销 <span style="font-size:11px;opacity:0.5">v4.19.3</span></h2><small>NAS 自托管版</small></div>
     <div class="sidebar-company" style="padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.1)">
       <select id="companySelector" class="form-select form-select-sm" style="width:100%;background:rgba(255,255,255,0.12);color:#fff;border:none;border-radius:6px;padding:6px 8px;font-size:13px" onchange="switchCompany(parseInt(this.value))">
         <option value="">加载中...</option>
@@ -730,6 +730,15 @@ async function handleFiles(files) {
     seenInBatch[batchKey] = true;
     var {data: dupes} = await sb.from('invoices').select('id').eq('original_filename',file.name).eq('file_size',file.size).eq('company_id',currentCompany?currentCompany.id:1).limit(1);
     if (dupes&&dupes.length) { resultDiv.innerHTML += '<div class="alert alert-info py-1">⏭ 已跳过: '+file.name+'（已存在）</div>'; continue; }
+    // v4.19.3 发票号级查重：文件名含 20 位发票号码时，同号已存在则跳过
+    var numMatch = (file.name||'').match(/(\d{20})/);
+    if (numMatch) {
+      var {data: numDupes} = await sb.from('invoices').select('id').eq('invoice_number', numMatch[1]).limit(1);
+      if (numDupes && numDupes.length) {
+        resultDiv.innerHTML += '<div class="alert alert-warning py-1">⏭ 已跳过: '+file.name+'（发票号 '+numMatch[1]+' 已存在）</div>';
+        continue;
+      }
+    }
     var pct = Math.round((i/files.length)*100);
     bar.style.width = pct+'%'; bar.textContent = pct+'%';
     status.textContent = '上传中 ('+(i+1)+'/'+files.length+'): '+file.name;
@@ -842,6 +851,12 @@ async function ocrInvoice(id) {
       body: JSON.stringify({record:{id:id,storage_path:inv.storage_path}})
     });
     var result = await r.json();
+    if (result.merged && result.data) {
+      showToast('⚠️ 检测到重复发票（'+result.data.invoice_number+'），已合并到原记录并删除本条','warning');
+      await loadInvoices();
+      if (result.merged_id) await editInvoice(result.merged_id);
+      return;
+    }
     if (result.success && result.data && (result.data.invoice_number || result.data.seller_name || result.data.total_amount)) {
       var ocrUp={};
       if(result.data.invoice_number)ocrUp.invoice_number=result.data.invoice_number;
@@ -887,6 +902,12 @@ async function ocrInvoice(id) {
       body: JSON.stringify({record:{id:id,storage_path:inv.storage_path,image_base64:imgB64}})
     });
     var result2 = await r2.json();
+    if (result2.merged && result2.data) {
+      showToast('⚠️ 检测到重复发票（'+result2.data.invoice_number+'），已合并到原记录并删除本条','warning');
+      await loadInvoices();
+      if (result2.merged_id) await editInvoice(result2.merged_id);
+      return;
+    }
     if (result2.success && result2.data && (result2.data.invoice_number || result2.data.seller_name || result2.data.total_amount)) { 
       // Save OCR results to DB via Supabase SDK (browser has network access)
       var up={};if(result2.data.invoice_number)up.invoice_number=result2.data.invoice_number;if(result2.data.invoice_date)up.invoice_date=result2.data.invoice_date;if(result2.data.seller_name)up.seller_name=result2.data.seller_name;if(result2.data.total_amount)up.total_amount=result2.data.total_amount;if(result2.data.project_location)up.project_location=result2.data.project_location;up.raw_ocr_text=result2.raw||'';
@@ -1102,12 +1123,17 @@ async function exportOriginalsZip(){var ids=Array.from(selectedInvoices);if(!ids
 
 async function cleanupDuplicates() {
   if (!currentUser.isAdmin) { showToast('无清理权限','danger'); return; }
-  if (!confirm('清理重复发票？同名同大小只保留最新。')) return;
-  var cleanQuery = sb.from('invoices').select('id,original_filename,file_size,storage_path').order('created_at',{ascending:false});
+  if (!confirm('清理重复发票？同名同大小或同发票号只保留最新。')) return;
+  var cleanQuery = sb.from('invoices').select('id,original_filename,file_size,storage_path,invoice_number').order('created_at',{ascending:false});
   if (currentCompany) cleanQuery = cleanQuery.eq('company_id', currentCompany.id);
   var {data} = await cleanQuery;
   var seen={},ids=[],paths=[];
-  (data||[]).forEach(function(inv){var k=inv.original_filename+'_'+(inv.file_size||0);if(seen[k]){ids.push(inv.id);paths.push(inv.storage_path);}else{seen[k]=true;}});
+  (data||[]).forEach(function(inv){
+    var num = inv.invoice_number ? String(inv.invoice_number).trim() : '';
+    // v4.19.3 优先按发票号判重（同一张发票的照片/PDF 文件名不同但号码相同），无号码时退回文件名+大小
+    var k = num ? 'num_'+num : inv.original_filename+'_'+(inv.file_size||0);
+    if(seen[k]){ids.push(inv.id);paths.push(inv.storage_path);}else{seen[k]=true;}
+  });
   if (!ids.length) {showToast('✅ 没有重复','success');return;}
   for (var i=0;i<ids.length;i++) await sb.from('invoices').delete().eq('id',ids[i]);
   showToast('✅ 已清理 '+ids.length+' 条','success'); loadInvoices();
