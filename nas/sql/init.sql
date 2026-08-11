@@ -441,7 +441,7 @@ BEGIN
     SELECT COALESCE(SUM(total_amount),0),COUNT(*) INTO v_total,v_count
     FROM public.invoices WHERE TO_CHAR(invoice_date,'YYYY-MM')=p_key AND status='approved'
       AND (p_company_id IS NULL OR company_id=p_company_id);
-    SELECT JSONB_OBJECT_AGG(c.name, sub.amt) INTO v_breakdown
+    SELECT JSONB_OBJECT_AGG(sub.name, sub.amt) INTO v_breakdown
     FROM (SELECT c.name,COALESCE(SUM(i.total_amount),0) amt
           FROM public.invoices i JOIN public.expense_categories c ON i.category_id=c.id
           WHERE TO_CHAR(i.invoice_date,'YYYY-MM')=p_key AND i.status='approved'
@@ -454,7 +454,7 @@ BEGIN
       AND CEIL(EXTRACT(MONTH FROM invoice_date)/3.0)=SPLIT_PART(p_key,'-',2)::INT
       AND status='approved'
       AND (p_company_id IS NULL OR company_id=p_company_id);
-    SELECT JSONB_OBJECT_AGG(c.name, sub.amt) INTO v_breakdown
+    SELECT JSONB_OBJECT_AGG(sub.name, sub.amt) INTO v_breakdown
     FROM (SELECT c.name,COALESCE(SUM(i.total_amount),0) amt
           FROM public.invoices i JOIN public.expense_categories c ON i.category_id=c.id
           WHERE EXTRACT(YEAR FROM i.invoice_date)=SPLIT_PART(p_key,'-',1)::INT
@@ -466,7 +466,7 @@ BEGIN
     SELECT COALESCE(SUM(total_amount),0),COUNT(*) INTO v_total,v_count
     FROM public.invoices WHERE EXTRACT(YEAR FROM invoice_date)=p_key::INT AND status='approved'
       AND (p_company_id IS NULL OR company_id=p_company_id);
-    SELECT JSONB_OBJECT_AGG(c.name, sub.amt) INTO v_breakdown
+    SELECT JSONB_OBJECT_AGG(sub.name, sub.amt) INTO v_breakdown
     FROM (SELECT c.name,COALESCE(SUM(i.total_amount),0) amt
           FROM public.invoices i JOIN public.expense_categories c ON i.category_id=c.id
           WHERE EXTRACT(YEAR FROM i.invoice_date)=p_key::INT AND i.status='approved'

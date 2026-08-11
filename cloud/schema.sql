@@ -192,7 +192,7 @@ BEGIN
     WHERE TO_CHAR(invoice_date, 'YYYY-MM') = p_key
       AND status = 'approved';
 
-    SELECT JSONB_OBJECT_AGG(c.name, sub.amt)
+    SELECT JSONB_OBJECT_AGG(sub.name, sub.amt)
     INTO v_breakdown
     FROM (
       SELECT c.name, COALESCE(SUM(i.total_amount), 0) as amt
@@ -211,7 +211,7 @@ BEGIN
       AND CEIL(EXTRACT(MONTH FROM invoice_date) / 3.0) = SPLIT_PART(p_key, '-', 2)::INT
       AND status = 'approved';
 
-    SELECT JSONB_OBJECT_AGG(c.name, sub.amt)
+    SELECT JSONB_OBJECT_AGG(sub.name, sub.amt)
     INTO v_breakdown
     FROM (
       SELECT c.name, COALESCE(SUM(i.total_amount), 0) as amt
@@ -230,7 +230,7 @@ BEGIN
     WHERE EXTRACT(YEAR FROM invoice_date) = p_key::INT
       AND status = 'approved';
 
-    SELECT JSONB_OBJECT_AGG(c.name, sub.amt)
+    SELECT JSONB_OBJECT_AGG(sub.name, sub.amt)
     INTO v_breakdown
     FROM (
       SELECT c.name, COALESCE(SUM(i.total_amount), 0) as amt

@@ -1,5 +1,22 @@
 # ECS Expense System - Version History
 
+## v4.19.4 (2026-08-11)
+**改动**：修复报表缓存刷新函数 `refresh_expense_report` SQL 错误
+
+### 背景与根因
+- 函数三处（月/季/年）写 `JSONB_OBJECT_AGG(c.name, sub.amt)`，引用子查询外部不存在的表别名 `c`（正确应为 `sub`），一调用即报 `missing FROM-clause entry for table c`
+- 影响：NAS 无调用方、缓存表空 → 无用户可见影响；云版 Edge Function 调用但吞错 → 缓存永不刷新。属于埋雷问题
+
+### 关键变更
+- 修复为 `JSONB_OBJECT_AGG(sub.name, sub.amt)`（NAS `init.sql` + 云版 `schema.sql` 同步）
+- NAS 生产库已应用并实测：月/季/年报表缓存正常生成，数值与前端实时统计一致（2026 年度 ¥27,839.02/96 张、2026-08 ¥7,811.85/31 张）
+
+### 相关文件
+- `nas/sql/migration-v4.19.4-refresh-expense-report-fix.sql`（新增）
+- `nas/sql/init.sql`、`cloud/schema.sql`
+
+---
+
 ## v4.19.3 (2026-08-11)
 **改动**：修复重复发票清理不掉 + 上传时按发票号过滤重复（照片/PDF 双通道重复）
 
