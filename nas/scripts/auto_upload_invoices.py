@@ -29,6 +29,7 @@ import logging
 import argparse
 import atexit
 import threading
+import subprocess
 from datetime import datetime
 
 # 进程级处理锁 — 防止同一文件被多个扫描周期重复处理
@@ -47,12 +48,30 @@ DEFAULT_WATCH_DIR = os.path.expanduser(
 )
 
 # NAS API 地址（ECS 系统 Nginx 网关）
-# 默认使用 Tailscale 内网地址访问 NAS（稳定可靠，不受 Cloudflare WAF 影响）
-# 若要通过 Cloudflare Tunnel 访问，设置环境变量：
-#   export ECS_NAS_HOST="http://100.105.75.56:18000"
-NAS_HOST = os.environ.get("ECS_NAS_HOST", "http://100.105.75.56:18000")
-# 通过环境变量切换回 Tailscale 内网地址：
-#   export ECS_NAS_HOST="http://100.105.75.56:18000"
+# 多地址自动容灾：
+#   1. 显式设置环境变量 ECS_NAS_HOST 时，只使用该地址（兼容旧行为）
+#   2. 未设置时依次探测：局域网直连（192.168.3.150，同网段最快最稳）
+#      → Tailscale 内网（100.105.75.56，外出/跨网段时可用）
+# 当前地址不可达会自动切换到下一个可用地址；恢复后优先回切局域网。
+_explicit_nas_host = os.environ.get("ECS_NAS_HOST", "").strip().rstrip("/")
+if _explicit_nas_host:
+    NAS_HOSTS = [_explicit_nas_host]
+else:
+    NAS_HOSTS = [
+        "http://192.168.3.150:18000",
+        "http://100.105.75.56:18000",
+    ]
+
+
+def _set_active_host(host):
+    """切换当前 NAS 地址，并同步更新所有 API 端点"""
+    global NAS_HOST, STORAGE_API, REST_API
+    NAS_HOST = host
+    STORAGE_API = f"{NAS_HOST}/storage/v1/object/invoices"
+    REST_API = f"{NAS_HOST}/rest/v1/rpc/insert_invoice"
+
+
+NAS_HOST = NAS_HOSTS[0]
 STORAGE_API = f"{NAS_HOST}/storage/v1/object/invoices"
 REST_API = f"{NAS_HOST}/rest/v1/rpc/insert_invoice"
 
@@ -95,6 +114,9 @@ BACKOFF_BASE = 30               # 初始退避秒数（网络断连时）
 BACKOFF_MAX = 600               # 最大退避秒数（10分钟）
 _nas_down_since = 0.0           # NAS 断开时间戳
 _last_failed_retry = 0          # 上次重试 _failed/ 的循环计数
+_last_nas_probe = 0.0           # 上次实际探测 NAS 的时间戳（配合指数退避）
+ALERT_AFTER_SECONDS = 600       # NAS 全部不可达持续 10 分钟后本地通知
+_last_alert_ts = 0.0            # 上次发送本地通知的时间戳
 
 
 # 支持的发票文件扩展名
@@ -751,18 +773,40 @@ def _process_file_inner(filepath, conn, abs_watch, rel_path):
 # ============================================================
 
 def _check_nas_connectivity():
-    """检查 NAS API 是否可达（快速健康检查）。
-    
-    尝试访问 NAS 的 root 端点，超时 5 秒。
-    Returns: True 可达, False 不可达
+    """检查 NAS API 是否可达；多地址依次探测，选中第一个可用的作为当前主机。
+
+    探测端点使用 PostgREST 根路径（/rest/v1/），比站点首页更具体，
+    避免把局域网内其他设备的 Web 服务误判为 ECS 网关。
+    每个地址超时 5 秒，全部不可达返回 False。
     """
-    url = f"{NAS_HOST}/"
-    req = Request(url, method="GET", headers=_headers())
+    for host in NAS_HOSTS:
+        url = f"{host}/rest/v1/"
+        req = Request(url, method="GET", headers=_headers())
+        try:
+            with urlopen(req, timeout=5) as resp:
+                if resp.status < 500:
+                    if host != NAS_HOST:
+                        log.warning(f"NAS 地址切换: {NAS_HOST} → {host}")
+                        _set_active_host(host)
+                    return True
+        except Exception:
+            continue
+    return False
+
+
+def _notify_user(title, message):
+    """macOS 本地通知（监听进程以当前用户身份运行，可直接调用 osascript）"""
     try:
-        with urlopen(req, timeout=5) as resp:
-            return resp.status < 500
-    except Exception:
-        return False
+        script = 'display notification "{}" with title "{}"'.format(
+            str(message).replace('"', "'"), str(title).replace('"', "'")
+        )
+        subprocess.run(
+            ["osascript", "-e", script],
+            timeout=10,
+            capture_output=True,
+        )
+    except Exception as e:
+        log.warning(f"本地通知失败: {e}")
 
 
 def _get_backoff_delay():
@@ -785,13 +829,21 @@ def _handle_nas_disconnect():
     1. 记录首次断开时间戳
     2. 计算指数退避延迟
     3. 跳过本轮上传，进入等待
+    4. 持续不可达超过阈值时发送本地通知（防止静默堆积）
     """
-    global _nas_down_since
+    global _nas_down_since, _last_alert_ts, _last_nas_probe
     if _nas_down_since <= 0:
         _nas_down_since = time.time()
+        _last_nas_probe = time.time()
     delay = _get_backoff_delay()
     elapsed = time.time() - _nas_down_since
     log.info(f"NAS 不可达（已下线 {elapsed:.0f} 秒），等待 {delay} 秒后再试")
+    if elapsed >= ALERT_AFTER_SECONDS and time.time() - _last_alert_ts >= ALERT_AFTER_SECONDS:
+        _last_alert_ts = time.time()
+        _notify_user(
+            "ECS 发票自动上传",
+            f"NAS 已不可达 {elapsed / 60:.0f} 分钟，新下载发票暂未上传，恢复连接后会自动补传",
+        )
     return False
 
 
@@ -805,6 +857,7 @@ def _check_nas_alive():
         _nas_down_since = 0.0
         if was_down:
             log.info("NAS 恢复连接")
+            _notify_user("ECS 发票自动上传", "NAS 连接已恢复，继续正常上传")
         return True
     else:
         _handle_nas_disconnect()
@@ -1238,10 +1291,12 @@ def main():
 
                 # ======== v4.8：NAS 连通性检查（指数退避） ========
                 if _nas_down_since > 0:
+                    global _last_nas_probe
                     delay = _get_backoff_delay()
-                    backoff_elapsed = time.time() - _nas_down_since
-                    if backoff_elapsed < delay:
+                    # 仅在退避时间到期时实际探测一次，避免每个周期重复探测刷日志
+                    if time.time() - _last_nas_probe < delay:
                         continue
+                    _last_nas_probe = time.time()
                     alive = _check_nas_alive()
                     if not alive:
                         continue
