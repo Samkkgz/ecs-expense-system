@@ -1,5 +1,26 @@
 # ECS Expense System - Version History
 
+## v4.20.0 (2026-09-10)
+**改动**：用户管理新增超级管理员修改用户登录密码功能
+
+### 关键变更
+- 用户管理表格对 `super_admin` 显示“🔑 修改密码”按钮，管理员和其他角色不可见
+- 新增数据库 RPC `admin_reset_user_password`：仅允许超级管理员调用，密码长度 6 位至 72 字节，使用 bcrypt 哈希后写入 `auth.users`
+- 新增存量数据库迁移 `nas/sql/migration-v4.20.0-admin-reset-user-password.sql`，并同步更新 `nas/sql/init.sql`
+- 前端不记录明文密码；修改后既有登录会话保持至 JWT 过期，下次登录使用新密码
+
+### 部署状态
+- 本地代码、迁移、浏览器交互测试和 CI 回归测试已完成；因 NAS 当前网络不可达，尚未部署生产、尚未在生产环境执行数据库 RPC 实测
+
+### 相关文件
+- `nas/index.html`
+- `nas/sql/init.sql`
+- `nas/sql/migration-v4.20.0-admin-reset-user-password.sql`
+- `nas/tests/admin-reset-password.test.js`
+- `.github/workflows/nas-tests.yml`
+
+---
+
 ## v4.19.5 (2026-08-16)
 **改动**：自动上传 NAS 地址多链路容灾（局域网直连 + Tailscale 自动切换）+ 长时间断连本地通知
 

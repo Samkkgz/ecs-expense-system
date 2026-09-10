@@ -1,4 +1,4 @@
-<!-- ECS v4.19.4 - 修复报表缓存刷新函数 refresh_expense_report -->
+<!-- ECS v4.20.0 - 超级管理员修改用户密码 -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -77,7 +77,7 @@
 <!-- 主应用 -->
 <div class="app-layout" id="appLayout">
   <div class="sidebar">
-    <div class="sidebar-header"><h2>🧾 ECS 报销 <span style="font-size:11px;opacity:0.5">v4.19.4</span></h2><small>NAS 自托管版</small></div>
+    <div class="sidebar-header"><h2>🧾 ECS 报销 <span style="font-size:11px;opacity:0.5">v4.20.0</span></h2><small>NAS 自托管版</small></div>
     <div class="sidebar-company" style="padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.1)">
       <select id="companySelector" class="form-select form-select-sm" style="width:100%;background:rgba(255,255,255,0.12);color:#fff;border:none;border-radius:6px;padding:6px 8px;font-size:13px" onchange="switchCompany(parseInt(this.value))">
         <option value="">加载中...</option>
@@ -266,6 +266,7 @@ var companies = [];
 var currentCompany = null;
 var userCompanies = [];
 var isSuperAdmin = false;
+var adminProfiles = [];
 var categories = [];
 var allInvoices = [];
 var selectedInvoices = new Set();
@@ -1526,6 +1527,7 @@ async function batchRejectSelected() {
 async function loadAdminPanel() {
   var {data: profiles_data} = await sb.from('profiles').select('*').order('email');
   if (!profiles_data) return;
+  adminProfiles = profiles_data;
   var container = document.getElementById('adminContent');
   
   var {data: comps} = await sb.from('companies').select('*').order('sort_order');
@@ -1550,7 +1552,7 @@ async function loadAdminPanel() {
   
   var container = document.getElementById('adminContent');
   container.innerHTML = '<h5>👥 用户管理</h5><div class="table-responsive"><table class="table"><thead><tr><th>邮箱</th><th>名称</th><th>角色</th><th>所属公司</th><th>状态</th><th>操作</th></tr></thead><tbody>'+
-    profiles_data.map(function(u){return '<tr><td>'+(u.email||'-')+'</td><td>'+(u.name||'-')+'</td><td><select class="form-select form-select-sm" id="role_'+u.id+'"><option value="member"'+(u.role==='member'?' selected':'')+'>成员</option><option value="admin"'+(u.role==='admin'?' selected':'')+'>管理员</option><option value="super_admin"'+(u.role==='super_admin'?' selected':'')+'>超级管理员</option></select></td><td>'+getCompanyNames(u.id)+'</td><td><span class="badge '+(u.status==='active'?'bg-success':'bg-warning')+'">'+(u.status||'-')+'</span></td><td style="white-space:nowrap"><button class="btn btn-sm btn-outline-primary" onclick="adminUpdateRole(\''+u.id+'\')">💾</button>'+(isSuperAdmin?' <button class="btn btn-sm btn-outline-secondary" onclick="adminAssignCompanies(\''+u.id+'\')" title="修改所属公司">🏢</button>':'')+(u.id!==currentUser.id?' <button class="btn btn-sm btn-outline-'+(u.status==='active'?'warning':'success')+'" onclick="adminToggleStatus(\''+u.id+'\',\''+u.status+'\')">'+(u.status==='active'?'⏸':'▶')+'</button> <button class="btn btn-sm btn-outline-danger" onclick="adminDeleteUser(\''+u.id+'\')">🗑</button>':'')+'</td></tr>';}).join('')+
+    profiles_data.map(function(u){return '<tr><td>'+(u.email||'-')+'</td><td>'+(u.name||'-')+'</td><td><select class="form-select form-select-sm" id="role_'+u.id+'"><option value="member"'+(u.role==='member'?' selected':'')+'>成员</option><option value="admin"'+(u.role==='admin'?' selected':'')+'>管理员</option><option value="super_admin"'+(u.role==='super_admin'?' selected':'')+'>超级管理员</option></select></td><td>'+getCompanyNames(u.id)+'</td><td><span class="badge '+(u.status==='active'?'bg-success':'bg-warning')+'">'+(u.status||'-')+'</span></td><td style="white-space:nowrap"><button class="btn btn-sm btn-outline-primary" onclick="adminUpdateRole(\''+u.id+'\')">💾</button>'+(isSuperAdmin?' <button class="btn btn-sm btn-outline-secondary" onclick="adminAssignCompanies(\''+u.id+'\')" title="修改所属公司">🏢</button> <button class="btn btn-sm btn-outline-dark" onclick="openAdminResetPassword(\''+u.id+'\')" title="修改登录密码">🔑</button>':'')+(u.id!==currentUser.id?' <button class="btn btn-sm btn-outline-'+(u.status==='active'?'warning':'success')+'" onclick="adminToggleStatus(\''+u.id+'\',\''+u.status+'\')">'+(u.status==='active'?'⏸':'▶')+'</button> <button class="btn btn-sm btn-outline-danger" onclick="adminDeleteUser(\''+u.id+'\')">🗑</button>':'')+'</td></tr>';}).join('')+
     '</tbody></table></div>'+
     '<hr><h6>📊 费用统计</h6><div id="adminStatsContent"><p class="text-muted">加载中...</p></div>'+
     '<hr><h6>📧 邀请新用户</h6><div class="row g-2"><div class="col-md-3"><input class="form-control" id="inviteEmail" placeholder="邮箱"></div><div class="col-md-2"><input class="form-control" id="inviteName" placeholder="名称"></div><div class="col-md-2"><select class="form-select" id="inviteRole"><option value="member">成员</option><option value="admin">管理员</option></select></div><div class="col-md-3" id="inviteCompanyCheckboxes">'+(companies.map(function(c){return '<label class="form-check-label me-2" style="font-size:13px;color:#555"><input type="checkbox" class="invite-company-cb" value="'+c.id+'" checked> '+(c.short_name||c.name)+'</label>';}).join('')||'<span class="text-muted">暂无公司</span>')+'</div><div class="col-md-3"><button class="btn btn-primary w-100" onclick="inviteUser()">邀请</button></div></div>';
@@ -1584,6 +1586,99 @@ async function loadAdminStats() {
 async function adminUpdateRole(uid) {
   await sb.rpc('admin_create_profile',{p_id:uid,p_email:'',p_name:'',p_role:document.getElementById('role_'+uid).value});
   showToast('✅ 已更新','success');
+}
+
+function openAdminResetPassword(uid) {
+  if (!isSuperAdmin) return showToast('仅超级管理员可修改用户密码','danger');
+
+  var existing = document.querySelector('[data-password-overlay]');
+  if (existing) existing.remove();
+
+  var target = adminProfiles.find(function(u){return u.id === uid;});
+  var targetLabel = target ? (target.email || target.name || uid) : uid;
+  var overlay = document.createElement('div');
+  overlay.className = 'modal-overlay active';
+  overlay.setAttribute('data-password-overlay','1');
+
+  var box = document.createElement('div');
+  box.className = 'modal-content';
+  box.style.maxWidth = '440px';
+  box.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">'+
+    '<h5 style="margin:0">🔑 修改用户密码</h5><button type="button" class="admin-password-close" style="background:none;border:none;font-size:24px;cursor:pointer">&times;</button>'+
+    '</div>'+
+    '<p id="adminPasswordTarget" style="font-size:14px;color:#555;margin-bottom:12px"></p>'+
+    '<p style="font-size:12px;color:#777;margin-bottom:12px">修改后用户已有登录会话保持至过期，新密码从下次登录开始生效。</p>'+
+    '<div class="mb-3"><label class="form-label">新密码</label><input type="password" class="form-control" id="adminNewPassword" minlength="6" maxlength="72" autocomplete="new-password" placeholder="至少6位"></div>'+
+    '<div class="mb-2"><label class="form-label">确认新密码</label><input type="password" class="form-control" id="adminConfirmPassword" minlength="6" maxlength="72" autocomplete="new-password" placeholder="再次输入新密码"></div>'+
+    '<div id="adminPasswordError" class="text-danger" style="font-size:13px;min-height:20px"></div>'+
+    '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">'+
+    '<button type="button" class="btn btn-secondary admin-password-cancel">取消</button>'+
+    '<button type="button" class="btn btn-primary admin-password-save">确认修改</button>'+
+    '</div>';
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  box.querySelector('#adminPasswordTarget').textContent = '用户：' + targetLabel;
+
+  var close = function(){overlay.remove();};
+  box.querySelector('.admin-password-close').addEventListener('click', close);
+  box.querySelector('.admin-password-cancel').addEventListener('click', close);
+  box.querySelector('.admin-password-save').addEventListener('click', function(){saveAdminResetPassword(uid, this);});
+  overlay.addEventListener('keydown', function(e){
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      saveAdminResetPassword(uid, box.querySelector('.admin-password-save'));
+    }
+  });
+  box.querySelector('#adminNewPassword').focus();
+}
+
+async function saveAdminResetPassword(uid, btn) {
+  if (!isSuperAdmin) return showToast('仅超级管理员可修改用户密码','danger');
+  var overlay = btn.closest('[data-password-overlay]');
+  if (!overlay) return;
+  var passwordInput = overlay.querySelector('#adminNewPassword');
+  var confirmInput = overlay.querySelector('#adminConfirmPassword');
+  var errorEl = overlay.querySelector('#adminPasswordError');
+  var password = passwordInput.value;
+  var confirmPassword = confirmInput.value;
+
+  errorEl.textContent = '';
+  if (!password || password.length < 6) {
+    errorEl.textContent = '新密码至少6位';
+    passwordInput.focus();
+    return;
+  }
+  if (typeof TextEncoder !== 'undefined' && new TextEncoder().encode(password).length > 72) {
+    errorEl.textContent = '新密码不能超过72字节';
+    passwordInput.focus();
+    return;
+  }
+  if (password !== confirmPassword) {
+    errorEl.textContent = '两次输入的密码不一致';
+    confirmInput.focus();
+    return;
+  }
+
+  var cancelBtn = overlay.querySelector('.admin-password-cancel');
+  cancelBtn.disabled = true;
+  btn.disabled = true;
+  btn.textContent = '保存中...';
+
+  var {error} = await sb.rpc('admin_reset_user_password', {
+    p_user_id: uid,
+    p_new_password: password
+  });
+
+  if (error) {
+    errorEl.textContent = '修改失败：' + error.message;
+    cancelBtn.disabled = false;
+    btn.disabled = false;
+    btn.textContent = '确认修改';
+    return;
+  }
+
+  overlay.remove();
+  showToast('✅ 用户密码已更新','success');
 }
 
 async function adminToggleStatus(uid,cur) {
