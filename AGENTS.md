@@ -66,7 +66,7 @@ ECS-Expanse-System/
 - **自动上传多地址容灾**：默认按 局域网 192.168.3.150 → Tailscale 100.105.75.56 自动切换，VPN/Tailscale 路由冲突导致单地址不可达时不再阻塞上传；全部地址不可达持续 10 分钟发送本地通知，恢复后自动补传
 
 ## 注意
-- NAS 版当前版本 v4.5（OCR 纯 stdlib，5 容器，named volumes）
+- NAS 版当前版本 v4.20.0（用户管理支持超级管理员修改密码，6 服务，named volumes）
 - `nas/` 目录代码与 NAS 上 `/volume1/docker/ecs-expense/` 保持一致
 - 如修改 `nas/` 代码，需同步复制到 NAS 部署目录
 - `.env` 文件不提交 git（已由 .gitignore 排除）

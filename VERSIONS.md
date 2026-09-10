@@ -9,8 +9,17 @@
 - 新增存量数据库迁移 `nas/sql/migration-v4.20.0-admin-reset-user-password.sql`，并同步更新 `nas/sql/init.sql`
 - 前端不记录明文密码；修改后既有登录会话保持至 JWT 过期，下次登录使用新密码
 
-### 部署状态
-- 本地代码、迁移、浏览器交互测试和 CI 回归测试已完成；因 NAS 当前网络不可达，尚未部署生产、尚未在生产环境执行数据库 RPC 实测
+### 生产部署与验证 (2026-09-11)
+- NAS 已部署 `v4.20.0`：执行 `migration-v4.20.0-admin-reset-user-password.sql`、替换 `index.html`、刷新 PostgREST schema 缓存并重启 `ecs-gateway`
+- 生产接口实测：超级管理员调用 RPC 返回 `204`，测试账号使用新密码登录返回 `200`；普通成员调用被拒绝，原密码哈希测试后已恢复且测试密码失效
+- Chrome 生产实测：页面版本 `v4.20.0`，超级管理员可进入用户管理，显示 2 个“🔑 修改密码”按钮，密码弹窗正常打开和关闭
+- CI：GitHub Actions `NAS regression tests` 通过
+
+### 生产数据变更登记
+- 数据来源：本次功能验收，无业务导入数据
+- 影响范围：`auth.users` 中测试账号 `sam.lu@bsctradingltd.top` 的 `encrypted_password` / `updated_at` 临时变更 1 次，测试后已恢复至原值
+- 备份路径：`/volume1/CodexBackup/ecs-expense/pre-v4.20.0-20260911-001551/postgres-20260911-001551.dump`
+- 验证状态：恢复后哈希比对 `true`，测试密码登录失败，无残留数据变更
 
 ### 相关文件
 - `nas/index.html`
