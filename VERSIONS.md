@@ -21,6 +21,13 @@
 - 备份路径：`/volume1/CodexBackup/ecs-expense/pre-v4.20.0-20260911-001551/postgres-20260911-001551.dump`
 - 验证状态：恢复后哈希比对 `true`，测试密码登录失败，无残留数据变更
 
+### 生产数据修正：恢复用户名称 (2026-09-11)
+- 数据来源：用户指定恢复 `sam.lu@bsctradingltd.top` 的用户名称为“魏丽萍”，无外部导入文件
+- 影响范围：`public.profiles` 1 行，`name` 由空值修正为“魏丽萍”；`auth.users.raw_user_meta_data.name` 原本已是“魏丽萍”，未修改
+- 备份路径：`/volume1/CodexBackup/ecs-expense/name-restore-20260911-012033/postgres-20260911-012033.dump`
+- 原始值记录：`/volume1/CodexBackup/ecs-expense/name-restore-20260911-012033/profile-before.tsv`
+- 验证状态：SQL `UPDATE 1`；Chrome 生产实测用户管理名称为“魏丽萍”
+
 ### 相关文件
 - `nas/index.html`
 - `nas/sql/init.sql`
