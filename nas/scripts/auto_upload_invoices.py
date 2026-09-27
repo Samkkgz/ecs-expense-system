@@ -111,7 +111,7 @@ UPLOAD_TIMEOUT = 120         # 上传超时（秒）
 FAILED_RETRY_INTERVAL = 1800    # _failed/ 重试间隔（秒）= 30分钟
 NAS_CHECK_INTERVAL = 60         # NAS 连通性检查间隔（秒）
 BACKOFF_BASE = 30               # 初始退避秒数（网络断连时）
-BACKOFF_MAX = 600               # 最大退避秒数（10分钟）
+BACKOFF_MAX = 120               # 最大退避秒数（2分钟，链路恢复后快速自动续传）
 _nas_down_since = 0.0           # NAS 断开时间戳
 _last_failed_retry = 0          # 上次重试 _failed/ 的循环计数
 _last_nas_probe = 0.0           # 上次实际探测 NAS 的时间戳（配合指数退避）
@@ -812,7 +812,7 @@ def _notify_user(title, message):
 def _get_backoff_delay():
     """根据 NAS 离线时长计算指数退避延迟。
     
-    公式: min(BACKOFF_BASE * 2^n, BACKOFF_MAX)
+    公式: min(BACKOFF_BASE * 2^n, BACKOFF_MAX)，最大间隔 2 分钟
     其中 n = 离线分钟数 // 2（每 2 分钟退避一级）
     """
     global _nas_down_since
