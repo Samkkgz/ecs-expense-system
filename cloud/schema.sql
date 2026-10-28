@@ -7,6 +7,7 @@
 CREATE TABLE IF NOT EXISTS expense_categories (
   id BIGSERIAL PRIMARY KEY,
   name TEXT NOT NULL UNIQUE,        -- e.g. 办公用品, 出差餐饮费
+  financial_category TEXT,          -- e.g. 办公费, 差旅费, 招待费
   description TEXT,
   sort_order INTEGER DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT NOW()
@@ -55,6 +56,9 @@ CREATE INDEX IF NOT EXISTS idx_invoices_category ON invoices(category_id);
 CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status);
 CREATE INDEX IF NOT EXISTS idx_invoices_month ON invoices(EXTRACT(YEAR FROM invoice_date), EXTRACT(MONTH FROM invoice_date));
 CREATE INDEX IF NOT EXISTS idx_invoices_uploader ON invoices(uploaded_by);
+-- v4.7.1 发票号级唯一索引：发票号非空时全局唯一，防止同号发票重复上传（照片/PDF 不同文件名但同号）
+CREATE UNIQUE INDEX IF NOT EXISTS uq_invoices_invoice_number ON invoices (invoice_number)
+  WHERE invoice_number IS NOT NULL AND btrim(invoice_number) <> '';
 
 -- 3. 月度/季度/年度报表缓存
 CREATE TABLE IF NOT EXISTS expense_reports (
@@ -188,7 +192,7 @@ BEGIN
     WHERE TO_CHAR(invoice_date, 'YYYY-MM') = p_key
       AND status = 'approved';
 
-    SELECT JSONB_OBJECT_AGG(c.name, sub.amt)
+    SELECT JSONB_OBJECT_AGG(sub.name, sub.amt)
     INTO v_breakdown
     FROM (
       SELECT c.name, COALESCE(SUM(i.total_amount), 0) as amt
@@ -207,7 +211,7 @@ BEGIN
       AND CEIL(EXTRACT(MONTH FROM invoice_date) / 3.0) = SPLIT_PART(p_key, '-', 2)::INT
       AND status = 'approved';
 
-    SELECT JSONB_OBJECT_AGG(c.name, sub.amt)
+    SELECT JSONB_OBJECT_AGG(sub.name, sub.amt)
     INTO v_breakdown
     FROM (
       SELECT c.name, COALESCE(SUM(i.total_amount), 0) as amt
@@ -226,7 +230,7 @@ BEGIN
     WHERE EXTRACT(YEAR FROM invoice_date) = p_key::INT
       AND status = 'approved';
 
-    SELECT JSONB_OBJECT_AGG(c.name, sub.amt)
+    SELECT JSONB_OBJECT_AGG(sub.name, sub.amt)
     INTO v_breakdown
     FROM (
       SELECT c.name, COALESCE(SUM(i.total_amount), 0) as amt

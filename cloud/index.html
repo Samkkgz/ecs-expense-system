@@ -1,3 +1,4 @@
+<!-- ECS Cloud v4.7.1 - 发票号级去重：上传过滤 + 清理重复修复 -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -279,10 +280,11 @@
             <li class="nav-item"><button class="nav-link" data-period="annual" onclick="switchReport('annual')">年度报表</button></li>
           </ul>
           <div class="report-actions mb-3">
-            <select id="reportYearSelector" class="form-select form-select-sm" style="width:auto"></select>
-            <select id="reportPeriodSelector" class="form-select form-select-sm" style="width:auto" onchange="loadReportData()"></select>
-            <select id="reportUserSelector" class="form-select form-select-sm" style="width:auto;display:none" onchange="loadReportData()"></select>
-            <button class="btn btn-primary btn-sm" onclick="refreshReport()"><i class="bi bi-arrow-clockwise"></i> 刷新</button>
+           <select id="reportYearSelector" class="form-select form-select-sm" style="width:auto"></select>
+           <select id="reportPeriodSelector" class="form-select form-select-sm" style="width:auto" onchange="loadReportData()"></select>
+           <select id="reportUserSelector" class="form-select form-select-sm" style="width:auto;display:none" onchange="loadReportData()"></select>
+            <select id="reportFinCatSelector" class="form-select form-select-sm" style="width:auto;display:none" onchange="loadReportData()"></select>
+           <button class="btn btn-primary btn-sm" onclick="refreshReport()"><i class="bi bi-arrow-clockwise"></i> 刷新</button>
             <button class="btn btn-success btn-sm" onclick="exportReport()"><i class="bi bi-file-earmark-excel"></i> 导出报表</button>
           </div>
           <div id="reportContent"></div>
@@ -549,15 +551,25 @@ async function init() {
     const { data } = await sb.from('expense_categories').select('*').order('sort_order');
     if (data) {
       categories = data;
-      const selects = ['uploadCategory', 'filterCategory'];
+      const selects = ['uploadCategory', 'filterCategory', 'reportFinCatSelector'];
       selects.forEach(id => {
         const sel = document.getElementById(id);
         if (!sel) return;
         const currentVal = sel.value;
-        sel.innerHTML = id === 'uploadCategory' ? '<option value="">自动识别</option>' : '<option value="">全部类目</option>';
-        data.forEach(c => {
-          sel.innerHTML += `<option value="${c.id}">${c.name}</option>`;
-        });
+        if (id === 'reportFinCatSelector') {
+          // Populate with unique financial categories
+          const finCats = [...new Set(data.map(c => c.financial_category).filter(Boolean))];
+          sel.innerHTML = '<option value="">全部财务类目</option>';
+          finCats.forEach(fc => {
+            sel.innerHTML += `<option value="${fc}">${fc}</option>`;
+          });
+          sel.style.display = finCats.length ? 'inline-block' : 'none';
+        } else {
+          sel.innerHTML = id === 'uploadCategory' ? '<option value="">自动识别</option>' : '<option value="">全部类目</option>';
+          data.forEach(c => {
+            sel.innerHTML += `<option value="${c.id}">${c.name}</option>`;
+          });
+        }
         sel.value = currentVal;
       });
     }
@@ -947,6 +959,15 @@ async function init() {
         resultDiv.innerHTML += `<div class="alert alert-info">⏭ 已跳过重复文件: ${file.name}（之前已上传）</div>`;
         continue;
       }
+      // v4.7.1 发票号级查重：文件名含 20 位发票号码时，同号已存在则跳过
+      var numMatch = (file.name || '').match(/(\d{20})/);
+      if (numMatch) {
+        var { data: numDupes } = await sb.from('invoices').select('id').eq('invoice_number', numMatch[1]).limit(1);
+        if (numDupes && numDupes.length > 0) {
+          resultDiv.innerHTML += `<div class="alert alert-warning">⏭ 已跳过重复文件: ${file.name}（发票号 ${numMatch[1]} 已存在）</div>`;
+          continue;
+        }
+      }
 
       const pct = Math.round(((i) / files.length) * 100);
       bar.style.width = `${pct}%`;
@@ -1239,12 +1260,12 @@ async function init() {
 
   // ============================================================
     // ============================================================
-  // 清理重复发票（同文件名+同大小视为重复）
+  // 清理重复发票（同发票号或同文件名+同大小视为重复）
   // ============================================================
   async function cleanupDuplicates() {
-    if (!confirm('确定要清理重复上传的发票吗？同名同大小的文件只保留最新一份。')) return;
+    if (!confirm('确定要清理重复上传的发票吗？同名同大小或同发票号的只保留最新一份。')) return;
     
-    var cdQuery = sb.from('invoices').select('id, original_filename, file_size, created_at, storage_path');
+    var cdQuery = sb.from('invoices').select('id, original_filename, file_size, created_at, storage_path, invoice_number');
     if (!currentUser.isAdmin) {
       cdQuery = cdQuery.eq('uploaded_by', currentUser.id);
     }
@@ -1256,7 +1277,9 @@ async function init() {
     var deleteIds = [];
     
     for (var inv of allInvs) {
-      var key = inv.original_filename + '_' + (inv.file_size || 0);
+      // v4.7.1 优先按发票号判重（同一张发票的照片/PDF 文件名不同但号码相同），无号码时退回文件名+大小
+      var num = inv.invoice_number ? String(inv.invoice_number).trim() : '';
+      var key = num ? 'num_' + num : inv.original_filename + '_' + (inv.file_size || 0);
       if (seen[key]) {
         toDelete.push(inv.storage_path);
         deleteIds.push(inv.id);
@@ -1298,6 +1321,7 @@ async function init() {
   async function ocrInvoice(id) {
     const inv = allInvoices.find(i => i.id === id);
     if (!inv) { alert('未找到发票记录'); return; }
+    if (!inv.storage_path) { showToast('该发票无文件，无法识别','warning'); return; }
     
     var btn = document.querySelector('button[onclick="ocrInvoice(' + id + ')"]');
     if (btn) btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
@@ -1319,6 +1343,13 @@ async function init() {
       if (!funcRes.ok) { funcData.success = false; funcData.error = (funcData.error || '') + ' (HTTP ' + funcRes.status + ')'; }
       
       if (funcData.success && funcData.data) {
+        if (funcData.data.merged) {
+          btn.innerHTML = '✓';
+          showToast('⚠️ 检测到重复发票（' + (funcData.data.invoice_number || '') + '），已合并到原记录并删除本条', 'warning');
+          await loadInvoices();
+          if (funcData.data.id) editInvoice(funcData.data.id);
+          return;
+        }
         // 文字提取成功
         btn.innerHTML = '✓';
         Object.assign(inv, funcData.data);
@@ -1387,6 +1418,13 @@ async function init() {
       if (!ocrRes.ok) { ocrData.success = false; ocrData.error = (ocrData.error || '') + ' (HTTP ' + ocrRes.status + ')'; }
       
       if (ocrData.success && ocrData.data) {
+        if (ocrData.data.merged) {
+          btn.innerHTML = '✓';
+          showToast('⚠️ 检测到重复发票（' + (ocrData.data.invoice_number || '') + '），已合并到原记录并删除本条', 'warning');
+          await loadInvoices();
+          if (ocrData.data.id) editInvoice(ocrData.data.id);
+          return;
+        }
         btn.innerHTML = '✓';
         Object.assign(inv, ocrData.data);
         if (ocrData.data.invoice_date) inv.invoice_date = ocrData.data.invoice_date;
@@ -1469,10 +1507,12 @@ async function init() {
     editingInvoiceId = id;
     const inv = allInvoices.find(i => i.id === id);
     if (!inv) return;
+    if (!inv.storage_path) inv.storage_path = '';
 
     document.getElementById('invoiceModal').style.display = 'block';
     
-    var pdfUrl = SUPABASE_URL + '/storage/v1/object/public/invoices/' + inv.storage_path;
+    var hasFile = !!(inv.storage_path && inv.storage_path.length > 4);
+    var pdfUrl = hasFile ? SUPABASE_URL + '/storage/v1/object/public/invoices/' + inv.storage_path : '';
     
     document.getElementById('invoiceModalBody').innerHTML = `
       <div class="row g-3">
@@ -1515,10 +1555,10 @@ async function init() {
           <hr>
           <div class="d-flex align-items-center gap-2 mb-2">
             <strong>原始发票</strong>
-            <a href="${pdfUrl}" target="_blank" class="btn btn-sm btn-outline-secondary" rel="noopener">📄 新标签页打开</a>
+            ${hasFile ? '<a href="'+pdfUrl+'" target="_blank" class="btn btn-sm btn-outline-secondary" rel="noopener">📄 新标签页打开</a>' : '<span class="text-muted"><small>暂无文件</small></span>'}
           </div>
           <div id="pdfPreviewBox" style="border:1px solid #ddd;border-radius:8px;max-height:500px;overflow:auto;background:#f8f9fa;text-align:center;padding:20px">
-            <p class="text-muted">加载PDF预览中...</p>
+            <p class="text-muted">${hasFile ? '加载PDF预览中...' : '暂无文件'}</p>
           </div>
         </div>
       </div>
@@ -1529,6 +1569,7 @@ async function init() {
     setTimeout(function() {
       var box = document.getElementById('pdfPreviewBox');
       if (!box) return;
+      if (!hasFile) { box.innerHTML = '<p class="text-muted">暂无文件</p>'; return; }
       box.innerHTML = '<iframe src="' + pdfUrl + '#view=FitH" style="width:100%;height:500px;border:none;border-radius:8px"></iframe>';
     }, 100);
   }
@@ -1632,15 +1673,17 @@ async function init() {
       }
       
       // 2. 删除存储文件（忽略文件不存在的错误）
-      try {
-        var { data: { session: s2 } } = await sb.auth.getSession();
-        await fetch(SUPABASE_URL + '/storage/v1/object/invoices/' + inv.storage_path, {
-          method: 'DELETE',
-          headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + (s2 ? s2.access_token : SUPABASE_ANON_KEY) }
-        });
-      } catch(storageErr) {
-        // 存储文件删除失败不阻塞整体删除
-        console.warn('存储文件删除失败（可能已被删除）:', storageErr.message);
+      if (inv.storage_path) {
+        try {
+          var { data: { session: s2 } } = await sb.auth.getSession();
+          await fetch(SUPABASE_URL + '/storage/v1/object/invoices/' + inv.storage_path, {
+            method: 'DELETE',
+            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + (s2 ? s2.access_token : SUPABASE_ANON_KEY) }
+          });
+        } catch(storageErr) {
+          // 存储文件删除失败不阻塞整体删除
+          console.warn('存储文件删除失败（可能已被删除）:', storageErr.message);
+        }
       }
       
       // 3. 从本地列表移除
@@ -1690,27 +1733,38 @@ async function init() {
       }
 
       // 1. 明细数据
-      var detailData = [['序号','发票号码','开票日期','商家名称','项目描述','金额','税额','价税合计','费用类目','地点','状态','备注']];
+      var detailData = [['序号','发票号码','开票日期','商家名称','项目描述','金额','税额','价税合计','费用类目','财务类目','地点','状态','备注']];
       data.forEach(function(inv, idx) {
         var cat = categories.find(function(c) { return c.id === inv.category_id; });
+        var finCatName = (cat && cat.financial_category) || '-';
         var st = inv.status === 'approved' ? '已通过' : inv.status === 'rejected' ? '已驳回' : '待审核';
         detailData.push([
           idx+1, inv.invoice_number || '', inv.invoice_date || '', inv.seller_name || '', inv.item_description || '',
-          inv.amount || 0, inv.tax_amount || 0, inv.total_amount || 0, (cat && cat.name) || '未分类',
+          inv.amount || 0, inv.tax_amount || 0, inv.total_amount || 0, (cat && cat.name) || '未分类', finCatName,
           inv.project_location || '', st, inv.expense_note || ''
         ]);
       });
 
       // 2. 类目汇总
-      var catTotals = {};
+      var catTotals = {}, finCatTotals = {};
       data.forEach(function(inv) {
         var cat = categories.find(function(c) { return c.id === inv.category_id; });
         var catName = (cat && cat.name) || '未分类';
         catTotals[catName] = (catTotals[catName] || 0) + parseFloat(inv.total_amount || 0);
+        if (cat && cat.financial_category) {
+          finCatTotals[cat.financial_category] = (finCatTotals[cat.financial_category] || 0) + parseFloat(inv.total_amount || 0);
+        } else {
+          finCatTotals['未归类'] = (finCatTotals['未归类'] || 0) + parseFloat(inv.total_amount || 0);
+        }
       });
       var summaryData = [['费用类目', '金额']];
       for (var key in catTotals) {
         summaryData.push([key, catTotals[key]]);
+      }
+      summaryData.push([]);
+      summaryData.push(['财务类目', '金额']);
+      for (var fk in finCatTotals) {
+        summaryData.push([fk, finCatTotals[fk]]);
       }
 
       // 3. 创建 Excel 工作簿
@@ -1718,7 +1772,7 @@ async function init() {
       
       // 明细工作表
       var ws1 = XLSX.utils.aoa_to_sheet(detailData);
-      ws1['!cols'] = [{wch:5},{wch:20},{wch:12},{wch:25},{wch:20},{wch:10},{wch:10},{wch:10},{wch:12},{wch:10},{wch:8},{wch:15}];
+      ws1['!cols'] = [{wch:5},{wch:20},{wch:12},{wch:25},{wch:20},{wch:10},{wch:10},{wch:10},{wch:12},{wch:12},{wch:10},{wch:8},{wch:15}];
       XLSX.utils.book_append_sheet(wb, ws1, '发票明细');
       
       // 汇总工作表
@@ -1795,6 +1849,15 @@ async function init() {
     
     var { data: invoices } = await query;
     
+    // 财务类目筛选
+    var finCatFilter = document.getElementById('reportFinCatSelector').value;
+    if (finCatFilter) {
+      invoices = invoices.filter(function(inv) {
+        var cat = categories.find(function(c) { return c.id === inv.category_id; });
+        return cat && cat.financial_category === finCatFilter;
+      });
+    }
+    
     if (!invoices || invoices.length === 0) {
       renderReport(null, reportType, periodKey);
       return;
@@ -1805,18 +1868,30 @@ async function init() {
     
     // 按类目统计
     var cats = {};
+    var finCats = {};
     for (var inv of invoices) {
       var catName = '未分类';
       var cat = categories.find(function(c) { return c.id === inv.category_id; });
       if (cat) catName = cat.name;
       cats[catName] = (cats[catName] || 0) + parseFloat(inv.total_amount || 0);
+      if (cat && cat.financial_category) {
+        finCats[cat.financial_category] = (finCats[cat.financial_category] || 0) + parseFloat(inv.total_amount || 0);
+      }
     }
     
-    var report = { total_amount: total, invoice_count: count, category_breakdown: cats };
-    renderReport(report, reportType, periodKey);
+    // 未映射财务类目的归入"未归类"
+    for (var inv of invoices) {
+      var cat = categories.find(function(c) { return c.id === inv.category_id; });
+      if (!cat || !cat.financial_category) {
+        finCats['未归类'] = (finCats['未归类'] || 0) + parseFloat(inv.total_amount || 0);
+      }
+    }
+    
+    var report = { total_amount: total, invoice_count: count, category_breakdown: cats, financial_breakdown: finCats };
+    renderReport(report, reportType, periodKey, finCats);
   }
 
-  function renderReport(report, type, key) {
+  function renderReport(report, type, key, finCats) {
     const container = document.getElementById('reportContent');
     if (!report) {
       container.innerHTML = '<p class="text-muted">暂无数据</p>';
@@ -1866,6 +1941,24 @@ async function init() {
       });
       html += `</tbody></table></div></div>`;
     }
+    
+    // 财务类目汇总
+    if (finCats && Object.keys(finCats).length > 0) {
+      html += `<div class="section-card"><h5>财务类目汇总</h5>
+        <div class="table-responsive"><table class="table">
+          <thead><tr><th>财务类目</th><th>金额</th><th>占比</th></tr></thead>
+          <tbody>`;
+      const finSorted = Object.entries(finCats).sort(function(a, b) { return b[1] - a[1]; });
+      finSorted.forEach(function(entry) {
+        var fcName = entry[0];
+        var fcAmt = entry[1];
+        var pct = total > 0 ? ((fcAmt / total) * 100).toFixed(1) : 0;
+        html += '<tr><td><strong>' + fcName + '</strong></td><td>¥' + parseFloat(fcAmt).toFixed(2) + '</td><td>' +
+          '<div class="progress" style="height:6px"><div class="progress-bar bg-info" style="width:' + pct + '%"></div></div>' +
+          '<small>' + pct + '%</small></td></tr>';
+      });
+      html += '</tbody></table></div></div>';
+    }
 
     container.innerHTML = html;
   }
@@ -1909,30 +2002,41 @@ async function init() {
     if (!invoices) invoices = [];
 
     // 构建 Excel
-    var detailData = [['序号','发票号码','开票日期','商家名称','项目描述','金额','税额','价税合计','费用类目','地点','备注']];
+    var detailData = [['序号','发票号码','开票日期','商家名称','项目描述','金额','税额','价税合计','费用类目','财务类目','地点','备注']];
     invoices.forEach(function(inv, idx) {
       var cat = categories.find(function(c) { return c.id === inv.category_id; });
+      var finCatName = (cat && cat.financial_category) || '-';
       detailData.push([
         idx+1, inv.invoice_number || '', inv.invoice_date || '', inv.seller_name || '', inv.item_description || '',
-        inv.amount || 0, inv.tax_amount || 0, inv.total_amount || 0, (cat && cat.name) || '未分类',
+        inv.amount || 0, inv.tax_amount || 0, inv.total_amount || 0, (cat && cat.name) || '未分类', finCatName,
         inv.project_location || '', inv.expense_note || ''
       ]);
     });
 
-    var catTotals = {};
+    var catTotals = {}, finCatTotals = {};
     invoices.forEach(function(inv) {
       var cat = categories.find(function(c) { return c.id === inv.category_id; });
       var catName = (cat && cat.name) || '未分类';
       catTotals[catName] = (catTotals[catName] || 0) + parseFloat(inv.total_amount || 0);
+      if (cat && cat.financial_category) {
+        finCatTotals[cat.financial_category] = (finCatTotals[cat.financial_category] || 0) + parseFloat(inv.total_amount || 0);
+      } else {
+        finCatTotals['未归类'] = (finCatTotals['未归类'] || 0) + parseFloat(inv.total_amount || 0);
+      }
     });
     var summaryData = [['费用类目', '金额']];
     for (var key in catTotals) summaryData.push([key, catTotals[key]]);
     var grandTotal = invoices.reduce(function(s, inv) { return s + parseFloat(inv.total_amount || 0); }, 0);
     summaryData.push(['总计', grandTotal]);
+    // Add financial category summary
+    summaryData.push([]);
+    summaryData.push(['财务类目', '金额']);
+    for (var fk in finCatTotals) summaryData.push([fk, finCatTotals[fk]]);
+    summaryData.push(['总计', grandTotal]);
 
     var wb = XLSX.utils.book_new();
     var ws1 = XLSX.utils.aoa_to_sheet(detailData);
-    ws1['!cols'] = [{wch:5},{wch:20},{wch:12},{wch:25},{wch:20},{wch:10},{wch:10},{wch:10},{wch:12},{wch:10},{wch:15}];
+    ws1['!cols'] = [{wch:5},{wch:20},{wch:12},{wch:25},{wch:20},{wch:10},{wch:10},{wch:10},{wch:12},{wch:12},{wch:10},{wch:15}];
     XLSX.utils.book_append_sheet(wb, ws1, '报表明细');
     var ws2 = XLSX.utils.aoa_to_sheet(summaryData);
     ws2['!cols'] = [{wch:20},{wch:12}];
@@ -1961,11 +2065,19 @@ async function init() {
     container.innerHTML = `
       <div class="table-responsive">
         <table class="table">
-          <thead><tr><th>排序</th><th>名称</th><th>描述</th><th>操作</th></tr></thead>
+          <thead><tr><th>排序</th><th>名称</th><th>财务类目</th><th>描述</th><th>操作</th></tr></thead>
           <tbody>
             ${data.map(c => `<tr>
               <td><input type="number" class="form-control form-control-sm" style="width:60px" value="${c.sort_order}" id="sort_${c.id}"></td>
               <td><input class="form-control form-control-sm" value="${c.name}" id="name_${c.id}"></td>
+              <td><select class="form-select form-select-sm" id="finCat_${c.id}">
+                <option value="">-</option>
+                <option value="办公费" ${c.financial_category === '办公费' ? 'selected' : ''}>办公费</option>
+                <option value="差旅费" ${c.financial_category === '差旅费' ? 'selected' : ''}>差旅费</option>
+                <option value="招待费" ${c.financial_category === '招待费' ? 'selected' : ''}>招待费</option>
+                <option value="福利费" ${c.financial_category === '福利费' ? 'selected' : ''}>福利费</option>
+                <option value="通讯费" ${c.financial_category === '通讯费' ? 'selected' : ''}>通讯费</option>
+              </select></td>
               <td><input class="form-control form-control-sm" value="${c.description || ''}" id="desc_${c.id}"></td>
               <td>
                 <button class="btn btn-sm btn-outline-primary" onclick="updateCategory(${c.id})"><i class="bi bi-save"></i></button>
@@ -1978,7 +2090,17 @@ async function init() {
       <h6>添加新类目</h6>
       <div class="row g-2">
         <div class="col-md-3"><input class="form-control" id="newCatName" placeholder="类目名称"></div>
-        <div class="col-md-5"><input class="form-control" id="newCatDesc" placeholder="描述（可选）"></div>
+        <div class="col-md-2">
+          <select class="form-select" id="newCatFinCat">
+            <option value="">财务类目</option>
+            <option value="办公费">办公费</option>
+            <option value="差旅费">差旅费</option>
+            <option value="招待费">招待费</option>
+            <option value="福利费">福利费</option>
+            <option value="通讯费">通讯费</option>
+          </select>
+        </div>
+        <div class="col-md-3"><input class="form-control" id="newCatDesc" placeholder="描述（可选）"></div>
         <div class="col-md-2"><input class="form-control" id="newCatSort" type="number" placeholder="排序" value="99"></div>
         <div class="col-md-2"><button class="btn btn-primary w-100" onclick="addCategory()">添加</button></div>
       </div>
@@ -1989,9 +2111,10 @@ async function init() {
     const name = document.getElementById(`name_${id}`).value.trim();
     const description = document.getElementById(`desc_${id}`).value.trim();
     const sort_order = parseInt(document.getElementById(`sort_${id}`).value) || 0;
+    const financial_category = document.getElementById(`finCat_${id}`).value || null;
     if (!name) return showToast('类目名称不能为空', 'warning');
 
-    const { error } = await sb.from('expense_categories').update({ name, description, sort_order }).eq('id', id);
+    const { error } = await sb.from('expense_categories').update({ name, description, sort_order, financial_category }).eq('id', id);
     if (error) showToast('更新失败: ' + error.message, 'danger');
     else { showToast('✅ 更新成功', 'success'); loadCategoryManagement(); }
   }
@@ -2000,9 +2123,10 @@ async function init() {
     const name = document.getElementById('newCatName').value.trim();
     const description = document.getElementById('newCatDesc').value.trim();
     const sort_order = parseInt(document.getElementById('newCatSort').value) || 99;
+    const financial_category = document.getElementById('newCatFinCat').value || null;
     if (!name) return showToast('请输入类目名称', 'warning');
 
-    const { error } = await sb.from('expense_categories').insert({ name, description, sort_order });
+    const { error } = await sb.from('expense_categories').insert({ name, description, sort_order, financial_category });
     if (error) showToast('添加失败: ' + error.message, 'danger');
     else { showToast('✅ 添加成功', 'success'); loadCategoryManagement(); loadCategories(); }
   }
