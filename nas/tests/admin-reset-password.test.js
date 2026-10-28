@@ -15,9 +15,9 @@ const migrationSql = fs.readFileSync(
 const versions = fs.readFileSync(path.join(repoRoot, 'VERSIONS.md'), 'utf8');
 
 test('version markers remain consistent', () => {
-  assert.match(indexHtml, /ECS v4\.20\.0/);
-  assert.match(indexHtml, />v4\.20\.0<\/span>/);
-  assert.match(versions, /## v4\.20\.0 \(2026-09-10\)/);
+  assert.match(indexHtml, /ECS v4\.20\.1/);
+  assert.match(indexHtml, />v4\.20\.1<\/span>/);
+  assert.match(versions, /## v4\.20\.1 \(2026-10-28\)/);
 });
 
 test('user management renders password reset only in the super admin branch', () => {

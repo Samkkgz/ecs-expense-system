@@ -1,5 +1,17 @@
 # ECS Expense System - Version History
 
+## v4.20.1 (2026-10-28)
+
+### 公网首屏与缓存优化
+- Supabase 浏览器包移出 `<head>`，避免阻塞首屏 HTML 解析。
+- 移除未使用的 Tesseract；PDF.js、JSZip、XLSX 改为在 OCR/导出操作触发时按需加载，首屏不下载这些重型依赖。
+- Nginx 启用 GZip，首页增加 `no-cache, must-revalidate`，继续使用 ETag/Last-Modified 条件请求。
+- 新增 Node 结构回归测试，锁定版本标记、重型依赖加载方式和 Nginx 缓存配置。
+
+### 验证
+- Node 回归：**8 passed / 0 failed**。
+- NAS 已部署 `v4.20.1`；真实 Chrome 冷加载 FCP 约 **0.34s**，Tesseract/PDF/JSZip/XLSX 均未在首屏下载，Console 0 错误、0 警告。
+
 ## v4.20.0 (2026-09-10)
 **改动**：用户管理新增超级管理员修改用户登录密码功能
 

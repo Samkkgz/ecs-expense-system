@@ -32,6 +32,7 @@ env/
 # Backup files
 *.bak
 *.bak2
+*.bak_*
 
 # Deploy artifacts
 deploy.command

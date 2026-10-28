@@ -1,4 +1,4 @@
-<!-- ECS v4.20.0 - 超级管理员修改用户密码 -->
+<!-- ECS v4.20.1 - 公网首屏与缓存优化 -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -6,7 +6,8 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23667eea'/%3E%3Ctext x='32' y='42' font-family='Arial' font-size='24' font-weight='bold' fill='white' text-anchor='middle'%3EECS%3C/text%3E%3C/svg%3E">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ECS 报销管理系统</title>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3/dist/css/bootstrap.min.css" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11/font/bootstrap-icons.css">
 <style>
@@ -77,7 +78,7 @@
 <!-- 主应用 -->
 <div class="app-layout" id="appLayout">
   <div class="sidebar">
-    <div class="sidebar-header"><h2>🧾 ECS 报销 <span style="font-size:11px;opacity:0.5">v4.20.0</span></h2><small>NAS 自托管版</small></div>
+    <div class="sidebar-header"><h2>🧾 ECS 报销 <span style="font-size:11px;opacity:0.5">v4.20.1</span></h2><small>NAS 自托管版</small></div>
     <div class="sidebar-company" style="padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.1)">
       <select id="companySelector" class="form-select form-select-sm" style="width:100%;background:rgba(255,255,255,0.12);color:#fff;border:none;border-radius:6px;padding:6px 8px;font-size:13px" onchange="switchCompany(parseInt(this.value))">
         <option value="">加载中...</option>
@@ -245,6 +246,7 @@ function closeInviteResult() {
 </script>
 
 <!-- ============ 配置（唯一需要改的地方） ============ -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script>
 // 🔧 NAS 部署配置 - 如果 NAS IP 变了，只改这里
 // v3.0: 外网访问请改用 https://ecs.你的域名.com
@@ -253,11 +255,6 @@ var SUPABASE_ANON_KEY = 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoiYW5vbi
 var SITE_URL = window.location.protocol + '//' + window.location.host;
 </script>
 
-<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script>pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";</script>
-<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
 // ============ 主程序 ============
 var sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -273,7 +270,55 @@ var selectedInvoices = new Set();
 var currentPage = 'dashboard';
 var currentPageNum = 1;
 var PAGE_SIZE = 20;
+var pdfLoaderPromise = null;
+var jsZipLoaderPromise = null;
+var xlsxLoaderPromise = null;
 var editingInvoiceId = null;
+
+function loadExternalScriptOnce(url) {
+  return new Promise(function(resolve, reject) {
+    var script = document.createElement('script');
+    script.src = url;
+    script.async = true;
+    script.onload = resolve;
+    script.onerror = function() { reject(new Error('导出组件加载失败')); };
+    document.head.appendChild(script);
+  });
+}
+
+function ensurePdfJs() {
+  if (window.pdfjsLib) return Promise.resolve();
+  if (!pdfLoaderPromise) {
+    pdfLoaderPromise = new Promise(function(resolve, reject) {
+      var script = document.createElement('script');
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+      script.async = true;
+      script.onload = function() {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        resolve();
+      };
+      script.onerror = function() { reject(new Error('PDF组件加载失败')); };
+      document.head.appendChild(script);
+    });
+  }
+  return pdfLoaderPromise;
+}
+
+function ensureJsZip() {
+  if (window.JSZip) return Promise.resolve();
+  if (!jsZipLoaderPromise) {
+    jsZipLoaderPromise = loadExternalScriptOnce('https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js');
+  }
+  return jsZipLoaderPromise;
+}
+
+function ensureXlsx() {
+  if (window.XLSX) return Promise.resolve();
+  if (!xlsxLoaderPromise) {
+    xlsxLoaderPromise = loadExternalScriptOnce('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js');
+  }
+  return xlsxLoaderPromise;
+}
 
 // ============ 登录 ============
 async function handleLogin() {
@@ -883,6 +928,7 @@ async function ocrInvoice(id) {
     
     if (ext==='pdf') {
       try {
+        await ensurePdfJs();
         var buf = await blob.arrayBuffer();
         var pdf = await pdfjsLib.getDocument({data:buf}).promise;
         var pg = await pdf.getPage(1);
@@ -1120,7 +1166,7 @@ function toggleSelect(id,checked){if(checked)selectedInvoices.add(id);else selec
 function updateSelectedCount(){var el=document.getElementById("selectedCount");if(!el)return;var cnt=selectedInvoices.size;if(cnt>0){el.style.display="inline";el.textContent="已选 "+cnt+" 项";}else el.style.display="none";}
 
 // ============ 导出选中原件 ZIP ============
-async function exportOriginalsZip(){var ids=Array.from(selectedInvoices);if(!ids.length){showToast("请先勾选发票","warning");return;}showToast("下载 "+ids.length+" 个文件...","info");try{var zip=new JSZip();var {data:{session}}=await sb.auth.getSession();var token=session?session.access_token:SUPABASE_ANON_KEY;var down=0,fail=[];for(var invId of ids){var inv=allInvoices.find(function(i){return i.id===invId;});if(!inv||!inv.storage_path){fail.push("#"+invId);continue;}try{var res=await fetch(SUPABASE_URL+"/storage/v1/object/invoices/"+inv.storage_path,{headers:{apikey:SUPABASE_ANON_KEY,Authorization:"Bearer "+token}});if(!res.ok)throw new Error("HTTP "+res.status);var blob=await res.blob();var fn=inv.original_filename||(inv.invoice_number||"invoice")+"_"+inv.id;var base=fn.replace(/\.[^.]+$/,""),ext=fn.split(".").pop().toLowerCase();if(["pdf","png","jpg","jpeg","bmp"].indexOf(ext)===-1)ext="pdf";var zn=base+"."+ext,c=1;while(zip.file(zn)){zn=base+"_("+c+")."+ext;c++;}zip.file(zn,blob,{binary:true});down++;}catch(e){fail.push((inv.original_filename||"#"+invId)+": "+e.message);}}if(!down){showToast("下载失败","danger");return;}var zb=await zip.generateAsync({type:"blob"});var url=URL.createObjectURL(zb),a=document.createElement("a");a.href=url;a.download="ECS发票原件_"+new Date().toISOString().slice(0,10)+".zip";document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);var msg="✅ 已打包 "+down+" 个文件";if(fail.length)msg+=", "+fail.length+" 个失败";showToast(msg,down===ids.length?"success":"warning");}catch(e){showToast("打包失败: "+e.message,"danger");}}
+async function exportOriginalsZip(){var ids=Array.from(selectedInvoices);if(!ids.length){showToast("请先勾选发票","warning");return;}showToast("下载 "+ids.length+" 个文件...","info");try{await ensureJsZip();var zip=new JSZip();var {data:{session}}=await sb.auth.getSession();var token=session?session.access_token:SUPABASE_ANON_KEY;var down=0,fail=[];for(var invId of ids){var inv=allInvoices.find(function(i){return i.id===invId;});if(!inv||!inv.storage_path){fail.push("#"+invId);continue;}try{var res=await fetch(SUPABASE_URL+"/storage/v1/object/invoices/"+inv.storage_path,{headers:{apikey:SUPABASE_ANON_KEY,Authorization:"Bearer "+token}});if(!res.ok)throw new Error("HTTP "+res.status);var blob=await res.blob();var fn=inv.original_filename||(inv.invoice_number||"invoice")+"_"+inv.id;var base=fn.replace(/\.[^.]+$/,""),ext=fn.split(".").pop().toLowerCase();if(["pdf","png","jpg","jpeg","bmp"].indexOf(ext)===-1)ext="pdf";var zn=base+"."+ext,c=1;while(zip.file(zn)){zn=base+"_("+c+")."+ext;c++;}zip.file(zn,blob,{binary:true});down++;}catch(e){fail.push((inv.original_filename||"#"+invId)+": "+e.message);}}if(!down){showToast("下载失败","danger");return;}var zb=await zip.generateAsync({type:"blob"});var url=URL.createObjectURL(zb),a=document.createElement("a");a.href=url;a.download="ECS发票原件_"+new Date().toISOString().slice(0,10)+".zip";document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);var msg="✅ 已打包 "+down+" 个文件";if(fail.length)msg+=", "+fail.length+" 个失败";showToast(msg,down===ids.length?"success":"warning");}catch(e){showToast("打包失败: "+e.message,"danger");}}
 
 async function cleanupDuplicates() {
   if (!currentUser.isAdmin) { showToast('无清理权限','danger'); return; }
@@ -1208,6 +1254,7 @@ async function exportInvoices(exportAll) {
   Object.entries(finCatSum).sort(function(a,b){return b[1]-a[1];}).forEach(function(e){
     summary.push([e[0],'¥'+e[1].toFixed(2)]);
   });
+  await ensureXlsx();
   var wb=XLSX.utils.book_new();
   var ws1=XLSX.utils.aoa_to_sheet(detail);
   ws1['!cols']=[{wch:6},{wch:14},{wch:12},{wch:18},{wch:12},{wch:10},{wch:12},{wch:10},{wch:8}];
@@ -1304,6 +1351,7 @@ async function exportReport() {
   
   var detail=[['序号','发票号码','日期','商家','金额','费用类目','财务类目','地点']];
   data.forEach(function(inv,i){var cat=categories.find(function(c){return c.id===inv.category_id;});detail.push([i+1,inv.invoice_number||'',inv.invoice_date||'',inv.seller_name||'',inv.total_amount||0,(cat?cat.name:'未分类'),(cat&&cat.financial_category?cat.financial_category:'-'),inv.project_location||'']);});
+  await ensureXlsx();
   var wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(detail),'报表明细');
   XLSX.writeFile(wb,'ECS报表_'+key+'.xlsx');
